@@ -17,12 +17,6 @@ public class UpdateProjectToARFoundation6 : EditorWindow
     private Vector2 scrollPosition;
     private List<string> logMessages = new List<string>();
     
-    [MenuItem("Tools/AR/Update Project To AR Foundation 6.x", false, 60)]
-    public static void ShowWindow()
-    {
-        EditorWindow.GetWindow(typeof(UpdateProjectToARFoundation6), false, "Update AR Foundation");
-    }
-    
     void OnGUI()
     {
         GUILayout.Label("AR Foundation 6.x Updater", EditorStyles.boldLabel);

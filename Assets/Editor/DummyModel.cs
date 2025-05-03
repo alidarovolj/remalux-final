@@ -11,12 +11,6 @@ using Unity.Barracuda;
 /// </summary>
 public class DummyModel : EditorWindow
 {
-    [MenuItem("Tools/AR/Fix PaintedWall Prefab", false, 20)]
-    public static void ShowWindow()
-    {
-        EditorWindow.GetWindow(typeof(DummyModel), false, "Fix PaintedWall");
-    }
-    
     void OnGUI()
     {
         GUILayout.Label("AR Wall Painting Model and Prefab Fixer", EditorStyles.boldLabel);

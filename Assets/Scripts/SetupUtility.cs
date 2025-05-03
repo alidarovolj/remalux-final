@@ -4,6 +4,8 @@ using System.Collections.Generic;
 using System.IO;
 using UnityEngine.XR.ARFoundation;
 using UnityEngine.UI;
+using Unity.XR.CoreUtils;
+using TMPro;
 
 #if UNITY_EDITOR
 using UnityEditor;

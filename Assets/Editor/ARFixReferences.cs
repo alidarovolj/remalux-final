@@ -8,13 +8,12 @@ using Unity.XR.CoreUtils;
 /// </summary>
 public class ARFixReferences : EditorWindow
 {
-    [MenuItem("Tools/AR/Fix Script References", false, 10)]
+    // Методы будут вызываться только изнутри нашего основного редактора
     public static void ShowWindow()
     {
         EditorWindow.GetWindow(typeof(ARFixReferences), false, "Fix AR References");
     }
     
-    [MenuItem("AR/Fix Script References", false, 10)]
     public static void FixReferences()
     {
         FixARScriptReferences();
