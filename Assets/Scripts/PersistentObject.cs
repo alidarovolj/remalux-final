@@ -7,6 +7,9 @@ public class PersistentObject : MonoBehaviour
 {
     private void Awake()
     {
+        // Перед вызовом DontDestroyOnLoad нужно переместить объект в корень иерархии
+        transform.SetParent(null);
+        
         // Не уничтожать этот объект при загрузке новой сцены
         DontDestroyOnLoad(this.gameObject);
     }

@@ -1,17 +1,25 @@
 using UnityEngine;
 using UnityEngine.XR.ARFoundation;
 using UnityEngine.UI;
+using System.Collections.Generic;
 
 /// <summary>
-/// Управление видимостью AR плоскостей
+/// Компонент для управления видимостью AR плоскостей и режимами их отображения
 /// </summary>
 public class TogglePlanesVisibility : MonoBehaviour
 {
+    [Header("AR Components")]
     [SerializeField] private ARPlaneManager planeManager;
-    [SerializeField] private Button toggleButton;
-    [SerializeField] private Text buttonText;
     
-    private bool planesVisible = false;
+    [Header("UI Elements")]
+    [SerializeField] private Button toggleVisibilityButton;
+    [SerializeField] private Button toggleExactPlacementButton;
+    [SerializeField] private Button toggleExtendWallsButton;
+    [SerializeField] private Text statusText;
+    
+    private bool planesVisible = true;
+    private bool usingExactPlacement = true;
+    private bool extendingWalls = false;
     
     private void Awake()
     {
@@ -19,36 +27,102 @@ public class TogglePlanesVisibility : MonoBehaviour
         if (planeManager == null)
             planeManager = FindObjectOfType<ARPlaneManager>();
             
-        if (toggleButton == null && GetComponent<Button>() != null)
-            toggleButton = GetComponent<Button>();
+        if (toggleVisibilityButton == null && GetComponent<Button>() != null)
+            toggleVisibilityButton = GetComponent<Button>();
     }
     
     private void Start()
     {
+        if (planeManager == null)
+        {
+            planeManager = FindObjectOfType<ARPlaneManager>();
+        }
+        
         // Начальное состояние - плоскости видимы
         SetPlanesVisibility(true);
         planesVisible = true;
         
-        // Добавляем обработчик нажатия кнопки
-        if (toggleButton != null)
+        // Настраиваем кнопку переключения видимости
+        if (toggleVisibilityButton != null)
         {
-            toggleButton.onClick.AddListener(TogglePlanes);
-            
-            // Обновляем текст кнопки
-            UpdateButtonText();
+            toggleVisibilityButton.onClick.AddListener(ToggleVisibility);
         }
+        
+        // Настраиваем кнопку переключения режима размещения
+        if (toggleExactPlacementButton != null)
+        {
+            toggleExactPlacementButton.onClick.AddListener(ToggleExactPlacement);
+        }
+        
+        // Настраиваем кнопку переключения расширения стен
+        if (toggleExtendWallsButton != null)
+        {
+            toggleExtendWallsButton.onClick.AddListener(ToggleExtendWalls);
+        }
+        
+        UpdateStatusText();
         
         Debug.Log("TogglePlanesVisibility: установлена начальная видимость плоскостей: ВИДИМЫЕ");
     }
     
     /// <summary>
-    /// Переключает видимость плоскостей
+    /// Переключает видимость AR плоскостей
     /// </summary>
-    public void TogglePlanes()
+    public void ToggleVisibility()
     {
+        if (planeManager == null) return;
+        
         planesVisible = !planesVisible;
-        SetPlanesVisibility(planesVisible);
-        UpdateButtonText();
+        
+        foreach (var plane in planeManager.trackables)
+        {
+            foreach (var visualizer in plane.GetComponentsInChildren<MeshRenderer>())
+            {
+                visualizer.enabled = planesVisible;
+            }
+        }
+        
+        UpdateStatusText();
+    }
+    
+    /// <summary>
+    /// Переключает режим точного размещения AR плоскостей
+    /// </summary>
+    public void ToggleExactPlacement()
+    {
+        if (planeManager == null) return;
+        
+        usingExactPlacement = !usingExactPlacement;
+        
+        foreach (var plane in planeManager.trackables)
+        {
+            foreach (var visualizer in plane.GetComponentsInChildren<ARPlaneVisualizer>())
+            {
+                visualizer.ToggleExactPlacement();
+            }
+        }
+        
+        UpdateStatusText();
+    }
+    
+    /// <summary>
+    /// Переключает режим расширения стен
+    /// </summary>
+    public void ToggleExtendWalls()
+    {
+        if (planeManager == null) return;
+        
+        extendingWalls = !extendingWalls;
+        
+        foreach (var plane in planeManager.trackables)
+        {
+            foreach (var visualizer in plane.GetComponentsInChildren<ARPlaneVisualizer>())
+            {
+                visualizer.ToggleExtendWalls();
+            }
+        }
+        
+        UpdateStatusText();
     }
     
     /// <summary>
@@ -64,7 +138,10 @@ public class TogglePlanesVisibility : MonoBehaviour
         foreach (var plane in planeManager.trackables)
         {
             // Включаем/выключаем визуализатор
-            plane.gameObject.SetActive(visible);
+            foreach (var visualizer in plane.GetComponentsInChildren<MeshRenderer>())
+            {
+                visualizer.enabled = visible;
+            }
         }
         
         // Также настраиваем обработчик событий для новых плоскостей
@@ -82,15 +159,26 @@ public class TogglePlanesVisibility : MonoBehaviour
         // Устанавливаем видимость для новых плоскостей
         foreach (var plane in args.added)
         {
-            plane.gameObject.SetActive(planesVisible);
+            foreach (var visualizer in plane.GetComponentsInChildren<MeshRenderer>())
+            {
+                visualizer.enabled = planesVisible;
+            }
         }
     }
     
-    private void UpdateButtonText()
+    /// <summary>
+    /// Обновляет текст статуса
+    /// </summary>
+    private void UpdateStatusText()
     {
-        if (buttonText != null)
+        if (statusText != null)
         {
-            buttonText.text = planesVisible ? "Скрыть плоскости" : "Показать плоскости";
+            string placementMode = usingExactPlacement ? "Точное" : "Смещенное";
+            string wallMode = extendingWalls ? "Расширенные" : "Реальные";
+            
+            statusText.text = $"Плоскости: {(planesVisible ? "Видимы" : "Скрыты")}\n" +
+                             $"Размещение: {placementMode}\n" +
+                             $"Стены: {wallMode}";
         }
     }
     
@@ -101,9 +189,19 @@ public class TogglePlanesVisibility : MonoBehaviour
             planeManager.planesChanged -= OnPlanesChanged;
         }
         
-        if (toggleButton != null)
+        if (toggleVisibilityButton != null)
         {
-            toggleButton.onClick.RemoveListener(TogglePlanes);
+            toggleVisibilityButton.onClick.RemoveListener(ToggleVisibility);
+        }
+        
+        if (toggleExactPlacementButton != null)
+        {
+            toggleExactPlacementButton.onClick.RemoveListener(ToggleExactPlacement);
+        }
+        
+        if (toggleExtendWallsButton != null)
+        {
+            toggleExtendWallsButton.onClick.RemoveListener(ToggleExtendWalls);
         }
     }
 } 

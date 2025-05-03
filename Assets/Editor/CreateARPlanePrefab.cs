@@ -2,58 +2,66 @@ using UnityEngine;
 using UnityEditor;
 using System.IO;
 
+/// <summary>
+/// Редакторский скрипт для создания префаба AR плоскости
+/// </summary>
 public class CreateARPlanePrefab : Editor
 {
     [MenuItem("Tools/AR/Create AR Plane Prefab")]
     public static void CreatePlanePrefab()
     {
-        // Создаем базовый объект для плоскости
-        GameObject planeObject = GameObject.CreatePrimitive(PrimitiveType.Quad);
-        planeObject.name = "ARPlaneVisualizer";
-        
-        // Устанавливаем правильную ориентацию для AR плоскости
-        planeObject.transform.localRotation = Quaternion.Euler(90f, 0, 0);
-        
-        // Добавляем компонент ARPlaneVisualizer
-        planeObject.AddComponent<ARPlaneVisualizer>();
-        
-        // Настраиваем материал
-        MeshRenderer renderer = planeObject.GetComponent<MeshRenderer>();
-        if (renderer != null && renderer.sharedMaterial != null)
-        {
-            // Создаем новый материал с полупрозрачностью
-            Material planeMaterial = new Material(Shader.Find("Unlit/Color"));
-            planeMaterial.color = new Color(0.5f, 0.5f, 0.5f, 0.3f);
-            renderer.sharedMaterial = planeMaterial;
-            
-            // Настраиваем свойства материала для полупрозрачности
-            renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            renderer.receiveShadows = false;
-        }
-        
-        // Создаем директорию, если она не существует
+        // Создаем директорию для префабов, если её ещё нет
         if (!Directory.Exists("Assets/Prefabs"))
         {
             Directory.CreateDirectory("Assets/Prefabs");
         }
         
-        // Сохраняем объект как префаб
+        // Создаем базовый объект для плоскости
+        GameObject planeObject = GameObject.CreatePrimitive(PrimitiveType.Quad);
+        planeObject.name = "ARPlaneVisualizer";
+        
+        // Добавляем компонент ARPlaneVisualizer
+        ARPlaneVisualizer planeVisualizer = planeObject.AddComponent<ARPlaneVisualizer>();
+        
+        // Настраиваем материалы
+        // Материал для вертикальных плоскостей (стены)
+        Material wallMaterial = new Material(Shader.Find("Unlit/Color"));
+        wallMaterial.color = new Color(0.7f, 0.4f, 0.2f, 0.7f); // Коричневый
+        AssetDatabase.CreateAsset(wallMaterial, "Assets/Prefabs/WallMaterial.mat");
+        
+        // Материал для горизонтальных плоскостей (пол)
+        Material floorMaterial = new Material(Shader.Find("Unlit/Color"));
+        floorMaterial.color = new Color(0.2f, 0.2f, 0.8f, 0.7f); // Синий
+        AssetDatabase.CreateAsset(floorMaterial, "Assets/Prefabs/FloorMaterial.mat");
+        
+        // Назначаем материалы через SerializedObject, чтобы они сохранились в префабе
+        SerializedObject serializedObj = new SerializedObject(planeVisualizer);
+        SerializedProperty verticalPlaneMaterialProp = serializedObj.FindProperty("verticalPlaneMaterial");
+        SerializedProperty horizontalPlaneMaterialProp = serializedObj.FindProperty("horizontalPlaneMaterial");
+        
+        verticalPlaneMaterialProp.objectReferenceValue = wallMaterial;
+        horizontalPlaneMaterialProp.objectReferenceValue = floorMaterial;
+        
+        serializedObj.ApplyModifiedProperties();
+        
+        // Настраиваем MeshRenderer
+        MeshRenderer renderer = planeObject.GetComponent<MeshRenderer>();
+        renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        renderer.receiveShadows = false;
+        renderer.material = wallMaterial;
+        
+        // Создаем префаб
         string prefabPath = "Assets/Prefabs/ARPlaneVisualizer.prefab";
+        PrefabUtility.SaveAsPrefabAsset(planeObject, prefabPath);
         
-        // В Unity 2018.3 и выше используем PrefabUtility.SaveAsPrefabAsset
-#if UNITY_2018_3_OR_NEWER
-        GameObject prefab = PrefabUtility.SaveAsPrefabAsset(planeObject, prefabPath);
-#else
-        GameObject prefab = PrefabUtility.CreatePrefab(prefabPath, planeObject);
-#endif
-        
-        // Удаляем временный объект сцены
+        // Удаляем временный объект из сцены
         DestroyImmediate(planeObject);
         
-        // Выводим сообщение об успешном создании
-        Debug.Log($"AR Plane Prefab создан по пути: {prefabPath}");
+        Debug.Log($"AR Plane Prefab создан: {prefabPath}");
         
-        // Выделяем созданный префаб в Project view
-        Selection.activeObject = prefab;
+        // Выбираем префаб в Project окне
+        var prefabAsset = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
+        Selection.activeObject = prefabAsset;
+        EditorGUIUtility.PingObject(prefabAsset);
     }
 } 
