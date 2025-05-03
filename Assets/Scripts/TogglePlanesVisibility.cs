@@ -25,8 +25,9 @@ public class TogglePlanesVisibility : MonoBehaviour
     
     private void Start()
     {
-        // Начальное состояние - плоскости скрыты
-        SetPlanesVisibility(false);
+        // Начальное состояние - плоскости видимы
+        SetPlanesVisibility(true);
+        planesVisible = true;
         
         // Добавляем обработчик нажатия кнопки
         if (toggleButton != null)
@@ -36,6 +37,8 @@ public class TogglePlanesVisibility : MonoBehaviour
             // Обновляем текст кнопки
             UpdateButtonText();
         }
+        
+        Debug.Log("TogglePlanesVisibility: установлена начальная видимость плоскостей: ВИДИМЫЕ");
     }
     
     /// <summary>

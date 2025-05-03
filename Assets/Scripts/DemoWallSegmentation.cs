@@ -18,11 +18,13 @@ public class DemoWallSegmentation : MonoBehaviour
     [SerializeField] private bool showDebugVisualization = true;
     [SerializeField] private RawImage debugImage;
     [SerializeField] private float updateInterval = 0.5f; // как часто обновлять визуализацию
+    [SerializeField] private Text wallCountText; // Текст для отображения количества стен
     
     // Приватные переменные
     private Texture2D segmentationTexture;
     private bool isProcessing = false;
     private float lastUpdateTime = 0;
+    private int lastWallCount = 0;
     
     // Start is called before the first frame update
     void Start()
@@ -60,14 +62,31 @@ public class DemoWallSegmentation : MonoBehaviour
         // Очищаем текстуру
         ClearSegmentationTexture();
         
+        // Отладочная информация - сколько стен обнаружено
+        int wallCount = 0;
+        
         // Для каждой вертикальной плоскости, отмечаем её пиксели как "стену"
         foreach (var plane in planeManager.trackables)
         {
             if (IsWall(plane))
             {
+                wallCount++;
                 // Проецируем вершины плоскости на экран
                 MarkPlaneOnTexture(plane);
             }
+        }
+        
+        // Обновляем UI текст с количеством стен, если он назначен
+        if (wallCountText != null)
+        {
+            wallCountText.text = $"Стены: {wallCount}";
+        }
+        
+        // Если количество стен изменилось, выводим сообщение
+        if (wallCount != lastWallCount)
+        {
+            Debug.Log($"DemoWallSegmentation: обнаружено вертикальных плоскостей: {wallCount}");
+            lastWallCount = wallCount;
         }
         
         // Применяем изменения к текстуре
@@ -77,6 +96,19 @@ public class DemoWallSegmentation : MonoBehaviour
         if (showDebugVisualization && debugImage != null)
         {
             debugImage.texture = segmentationTexture;
+            
+            // Выводим сообщение только при первом обновлении или при изменении количества стен
+            if (Time.frameCount % 300 == 0 || wallCount != lastWallCount)
+            {
+                Debug.Log("DemoWallSegmentation: Обновлена текстура отладки");
+            }
+        }
+        else
+        {
+            if (Time.frameCount % 300 == 0) // Ограничиваем частоту сообщений
+            {
+                Debug.LogWarning($"DemoWallSegmentation: Проблема с отображением отладки. showDebugVisualization={showDebugVisualization}, debugImage={debugImage != null}");
+            }
         }
         
         yield return null;
@@ -86,7 +118,14 @@ public class DemoWallSegmentation : MonoBehaviour
     // Определяем, является ли плоскость стеной (вертикальной)
     private bool IsWall(ARPlane plane)
     {
-        return plane.alignment == UnityEngine.XR.ARSubsystems.PlaneAlignment.Vertical;
+        bool isVertical = plane.alignment == UnityEngine.XR.ARSubsystems.PlaneAlignment.Vertical;
+        
+        if (isVertical)
+        {
+            Debug.Log($"Обнаружена вертикальная плоскость (стена): {plane.trackableId}");
+        }
+        
+        return isVertical;
     }
     
     // Проецируем плоскость на текстуру
@@ -96,6 +135,10 @@ public class DemoWallSegmentation : MonoBehaviour
         var mesh = plane.GetComponent<MeshFilter>().mesh;
         var vertices = mesh.vertices;
         var planeTransform = plane.transform;
+        
+        // Более яркий и заметный цвет для стены
+        Color wallColor = new Color(1, 0, 0, 0.8f); // Яркий красный с высокой непрозрачностью
+        Color edgeColor = new Color(1, 1, 0, 0.6f); // Желтый для краев
         
         // Проецируем каждую вершину на экран и закрашиваем соответствующие области
         foreach (var vertex in vertices)
@@ -108,29 +151,115 @@ public class DemoWallSegmentation : MonoBehaviour
             
             if (screenPos.z > 0) // если точка перед камерой
             {
-                // Закрашиваем пиксель красным с полупрозрачностью
+                // Закрашиваем пиксель
                 int x = Mathf.RoundToInt(screenPos.x);
                 int y = Mathf.RoundToInt(screenPos.y);
                 
                 // Проверяем границы экрана
                 if (x >= 0 && x < segmentationTexture.width && y >= 0 && y < segmentationTexture.height)
                 {
-                    segmentationTexture.SetPixel(x, y, new Color(1, 0, 0, 0.5f));
+                    segmentationTexture.SetPixel(x, y, wallColor);
                     
-                    // Закрашиваем соседние пиксели для лучшей видимости
-                    for (int dx = -3; dx <= 3; dx++)
+                    // Увеличиваем область закрашивания для лучшей видимости
+                    int brushSize = 8; // Увеличенный размер кисти
+                    for (int dx = -brushSize; dx <= brushSize; dx++)
                     {
-                        for (int dy = -3; dy <= 3; dy++)
+                        for (int dy = -brushSize; dy <= brushSize; dy++)
                         {
-                            int nx = x + dx;
-                            int ny = y + dy;
-                            if (nx >= 0 && nx < segmentationTexture.width && ny >= 0 && ny < segmentationTexture.height)
+                            // Рассчитываем расстояние от центра
+                            float distance = Mathf.Sqrt(dx * dx + dy * dy);
+                            if (distance <= brushSize)
                             {
-                                segmentationTexture.SetPixel(nx, ny, new Color(1, 0, 0, 0.3f));
+                                int nx = x + dx;
+                                int ny = y + dy;
+                                if (nx >= 0 && nx < segmentationTexture.width && ny >= 0 && ny < segmentationTexture.height)
+                                {
+                                    // Применяем цвет с затуханием от центра
+                                    float alpha = 1.0f - (distance / brushSize);
+                                    Color pixelColor = distance < brushSize/2 ? wallColor : edgeColor;
+                                    pixelColor.a *= alpha * 0.7f;
+                                    
+                                    // Комбинируем с текущим цветом для сглаживания
+                                    Color currentColor = segmentationTexture.GetPixel(nx, ny);
+                                    if (currentColor.a < pixelColor.a)
+                                    {
+                                        segmentationTexture.SetPixel(nx, ny, pixelColor);
+                                    }
+                                }
                             }
                         }
                     }
                 }
+            }
+        }
+        
+        // Дополнительно - выделяем границы плоскости
+        var indices = mesh.triangles;
+        for (int i = 0; i < indices.Length; i += 3)
+        {
+            var v1 = planeTransform.TransformPoint(vertices[indices[i]]);
+            var v2 = planeTransform.TransformPoint(vertices[indices[i+1]]);
+            var v3 = planeTransform.TransformPoint(vertices[indices[i+2]]);
+            
+            DrawLine(Camera.main.WorldToScreenPoint(v1), Camera.main.WorldToScreenPoint(v2), edgeColor);
+            DrawLine(Camera.main.WorldToScreenPoint(v2), Camera.main.WorldToScreenPoint(v3), edgeColor);
+            DrawLine(Camera.main.WorldToScreenPoint(v3), Camera.main.WorldToScreenPoint(v1), edgeColor);
+        }
+    }
+    
+    // Вспомогательный метод для рисования линий
+    private void DrawLine(Vector3 start, Vector3 end, Color color)
+    {
+        if (start.z <= 0 || end.z <= 0) return; // Пропускаем точки за камерой
+        
+        int x0 = Mathf.RoundToInt(start.x);
+        int y0 = Mathf.RoundToInt(start.y);
+        int x1 = Mathf.RoundToInt(end.x);
+        int y1 = Mathf.RoundToInt(end.y);
+        
+        // Алгоритм Брезенхэма для рисования линии
+        int dx = Mathf.Abs(x1 - x0);
+        int dy = Mathf.Abs(y1 - y0);
+        int sx = x0 < x1 ? 1 : -1;
+        int sy = y0 < y1 ? 1 : -1;
+        int err = dx - dy;
+        
+        while (true)
+        {
+            // Проверяем границы текстуры
+            if (x0 >= 0 && x0 < segmentationTexture.width && y0 >= 0 && y0 < segmentationTexture.height)
+            {
+                segmentationTexture.SetPixel(x0, y0, color);
+                
+                // Делаем линию толще для лучшей видимости
+                for (int i = -2; i <= 2; i++)
+                {
+                    for (int j = -2; j <= 2; j++)
+                    {
+                        int nx = x0 + i;
+                        int ny = y0 + j;
+                        if (nx >= 0 && nx < segmentationTexture.width && ny >= 0 && ny < segmentationTexture.height)
+                        {
+                            Color fadeColor = color;
+                            fadeColor.a *= 0.7f;
+                            segmentationTexture.SetPixel(nx, ny, fadeColor);
+                        }
+                    }
+                }
+            }
+            
+            if (x0 == x1 && y0 == y1) break;
+            
+            int e2 = 2 * err;
+            if (e2 > -dy)
+            {
+                err -= dy;
+                x0 += sx;
+            }
+            if (e2 < dx)
+            {
+                err += dx;
+                y0 += sy;
             }
         }
     }

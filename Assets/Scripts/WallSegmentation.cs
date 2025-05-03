@@ -82,6 +82,12 @@ public class WallSegmentation : MonoBehaviour
             }
         }
         
+        // Проверка наличия компонента для отображения отладки
+        if (showDebugVisualisation && debugImage == null)
+        {
+            Debug.LogError("Включена визуализация отладки (showDebugVisualisation), но не назначен компонент debugImage!");
+        }
+        
         // Загружаем нужную модель в зависимости от выбранного режима
         LoadSelectedModel();
             
