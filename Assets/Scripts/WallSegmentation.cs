@@ -26,7 +26,7 @@ public class WallSegmentation : MonoBehaviour
     [SerializeField] private Camera arCamera;
     
     [Header("Segmentation Mode")]
-    [SerializeField] private SegmentationMode currentMode = SegmentationMode.Demo;
+    [SerializeField] private SegmentationMode currentMode = SegmentationMode.ExternalModel;
     [SerializeField] private string externalModelPath = "model.onnx"; // Путь относительно StreamingAssets
     
     [Header("Barracuda Model")]
@@ -35,8 +35,8 @@ public class WallSegmentation : MonoBehaviour
     [SerializeField] private string outputName = "final_result"; // Имя выходного слоя в ONNX-модели
     
     [Header("Segmentation Parameters")]
-    [SerializeField] private int inputWidth = 513;
-    [SerializeField] private int inputHeight = 513;
+    [SerializeField] private int inputWidth = 256;
+    [SerializeField] private int inputHeight = 256;
     [SerializeField] private float threshold = 0.5f;
     [SerializeField] private int wallClassIndex = 1; // Индекс класса "стена" (может отличаться в зависимости от модели)
     
@@ -44,7 +44,7 @@ public class WallSegmentation : MonoBehaviour
     [SerializeField] private bool forceDemoMode = false; // Принудительно использовать демо-режим вместо ML
     [SerializeField] private bool showDebugVisualisation = true;
     [SerializeField] private RawImage debugImage;
-    [SerializeField] private float processingInterval = 0.2f; // Интервал между обработкой кадров для уменьшения нагрузки
+    [SerializeField] private float processingInterval = 0.3f;
     
     // Приватные переменные
     private Texture2D cameraTexture;
@@ -722,5 +722,157 @@ public class WallSegmentation : MonoBehaviour
     public bool IsUsingDemoMode()
     {
         return forceDemoMode || useDemoMode || currentMode == SegmentationMode.Demo;
+    }
+
+    // Привязка маски сегментации к AR плоскостям
+    public bool IsPlaneInSegmentationMask(ARPlane plane, float minCoverage = 0.5f)
+    {
+        if (segmentationTexture == null || plane == null)
+            return false;
+            
+        // Получаем меш плоскости
+        Mesh planeMesh = plane.GetComponent<MeshFilter>()?.mesh;
+        if (planeMesh == null)
+            return false;
+            
+        // Получаем вершины плоскости
+        Vector3[] vertices = planeMesh.vertices;
+        int[] triangles = planeMesh.triangles;
+        
+        if (vertices == null || vertices.Length == 0 || triangles == null || triangles.Length == 0)
+            return false;
+            
+        // Счетчики для определения покрытия
+        int totalVertices = 0;
+        int maskedVertices = 0;
+        
+        // Перебираем все вершины меша
+        for (int i = 0; i < vertices.Length; i++)
+        {
+            Vector3 worldPos = plane.transform.TransformPoint(vertices[i]);
+            Vector3 screenPos = arCamera.WorldToScreenPoint(worldPos);
+            
+            // Пропускаем вершины за камерой
+            if (screenPos.z <= 0)
+                continue;
+                
+            totalVertices++;
+            
+            // Преобразуем экранные координаты в координаты текстуры сегментации
+            int texX = Mathf.RoundToInt((screenPos.x / Screen.width) * segmentationTexture.width);
+            int texY = Mathf.RoundToInt((screenPos.y / Screen.height) * segmentationTexture.height);
+            
+            // Проверяем, находится ли точка в пределах текстуры
+            if (texX >= 0 && texX < segmentationTexture.width && texY >= 0 && texY < segmentationTexture.height)
+            {
+                // Получаем цвет пикселя и проверяем, относится ли он к классу стены
+                Color pixelColor = segmentationTexture.GetPixel(texX, texY);
+                
+                // В зависимости от типа маски можем проверять разные условия
+                // Для бинарной маски: белый цвет (или высокое значение канала) = стена
+                if (pixelColor.r > threshold || pixelColor.g > threshold || pixelColor.b > threshold)
+                {
+                    maskedVertices++;
+                }
+            }
+        }
+        
+        // Рассчитываем процент покрытия
+        float coverage = totalVertices > 0 ? (float)maskedVertices / totalVertices : 0;
+        
+        // Отладка
+        if (totalVertices > 0 && coverage > 0.1f)
+        {
+            Debug.Log($"Плоскость {plane.trackableId}: покрытие маской = {coverage:F2} ({maskedVertices}/{totalVertices})");
+        }
+        
+        // Возвращаем true, если покрытие превышает минимальный порог
+        return coverage >= minCoverage;
+    }
+    
+    // Получить процент покрытия плоскости маской сегментации
+    public float GetPlaneCoverageByMask(ARPlane plane)
+    {
+        if (segmentationTexture == null || plane == null)
+            return 0f;
+            
+        // Получаем меш плоскости
+        Mesh planeMesh = plane.GetComponent<MeshFilter>()?.mesh;
+        if (planeMesh == null)
+            return 0f;
+            
+        // Получаем вершины плоскости
+        Vector3[] vertices = planeMesh.vertices;
+        
+        if (vertices == null || vertices.Length == 0)
+            return 0f;
+            
+        // Счетчики для определения покрытия
+        int totalVertices = 0;
+        int maskedVertices = 0;
+        
+        // Перебираем все вершины меша
+        for (int i = 0; i < vertices.Length; i++)
+        {
+            Vector3 worldPos = plane.transform.TransformPoint(vertices[i]);
+            Vector3 screenPos = arCamera.WorldToScreenPoint(worldPos);
+            
+            // Пропускаем вершины за камерой
+            if (screenPos.z <= 0)
+                continue;
+                
+            totalVertices++;
+            
+            // Преобразуем экранные координаты в координаты текстуры сегментации
+            int texX = Mathf.RoundToInt((screenPos.x / Screen.width) * segmentationTexture.width);
+            int texY = Mathf.RoundToInt((screenPos.y / Screen.height) * segmentationTexture.height);
+            
+            // Проверяем, находится ли точка в пределах текстуры
+            if (texX >= 0 && texX < segmentationTexture.width && texY >= 0 && texY < segmentationTexture.height)
+            {
+                // Получаем цвет пикселя и проверяем, относится ли он к классу стены
+                Color pixelColor = segmentationTexture.GetPixel(texX, texY);
+                
+                // В зависимости от типа маски можем проверять разные условия
+                if (pixelColor.r > threshold || pixelColor.g > threshold || pixelColor.b > threshold)
+                {
+                    maskedVertices++;
+                }
+            }
+        }
+        
+        // Рассчитываем процент покрытия
+        return totalVertices > 0 ? (float)maskedVertices / totalVertices : 0;
+    }
+    
+    // Получить текущую текстуру сегментации (для других компонентов)
+    public Texture2D GetSegmentationTexture()
+    {
+        return segmentationTexture;
+    }
+
+    // Проверка состояния отладочной визуализации
+    public bool IsDebugVisualizationEnabled()
+    {
+        return showDebugVisualisation;
+    }
+    
+    // Включение/выключение отладочной визуализации
+    public void EnableDebugVisualization(bool enable)
+    {
+        showDebugVisualisation = enable;
+        
+        // Если мы включаем визуализацию, убедимся что есть связь с RawImage
+        if (enable && debugImage == null)
+        {
+            Debug.LogWarning("Отладочная визуализация включена, но RawImage не назначен");
+            
+            // Можно попробовать найти RawImage автоматически
+            debugImage = FindObjectOfType<RawImage>();
+            if (debugImage == null)
+            {
+                Debug.LogError("Не удалось найти компонент RawImage для отладочной визуализации");
+            }
+        }
     }
 } 

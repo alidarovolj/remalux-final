@@ -5,6 +5,7 @@ using UnityEngine;
 using UnityEngine.XR.ARFoundation;
 using UnityEngine.XR.ARSubsystems;
 using Unity.XR.CoreUtils;
+using System;
 
 /// <summary>
 /// Компонент для покраски стен в AR
@@ -60,6 +61,9 @@ public class WallPainter : MonoBehaviour
         }
     }
     
+    // Для хранения текстур предпросмотра снимков
+    private Dictionary<string, Texture2D> snapshotPreviews = new Dictionary<string, Texture2D>();
+    
     private void Start()
     {
         // Проверяем и настраиваем необходимые компоненты
@@ -91,16 +95,16 @@ public class WallPainter : MonoBehaviour
         
         // Получаем необходимые AR компоненты, если они не назначены
         if (raycastManager == null)
-            raycastManager = Object.FindAnyObjectByType<ARRaycastManager>();
+            raycastManager = UnityEngine.Object.FindAnyObjectByType<ARRaycastManager>();
             
         if (xrOrigin == null)
-            xrOrigin = Object.FindAnyObjectByType<XROrigin>();
+            xrOrigin = UnityEngine.Object.FindAnyObjectByType<XROrigin>();
             
         if (arCamera == null && xrOrigin != null)
             arCamera = xrOrigin.Camera;
             
         if (wallSegmentation == null)
-            wallSegmentation = Object.FindAnyObjectByType<WallSegmentation>();
+            wallSegmentation = UnityEngine.Object.FindAnyObjectByType<WallSegmentation>();
         
         // Создаем первый снимок
         CreateNewSnapshot("Исходный вариант");
@@ -144,6 +148,17 @@ public class WallPainter : MonoBehaviour
     
     private void PaintWall(ARPlane plane, Pose hitPose)
     {
+        // Проверяем, соответствует ли плоскость результатам сегментации стен
+        if (wallSegmentation != null)
+        {
+            float coverage = wallSegmentation.GetPlaneCoverageByMask(plane);
+            if (coverage < 0.3f) // Требуем минимум 30% покрытия маской сегментации
+            {
+                Debug.Log($"Плоскость {plane.trackableId} не распознана как стена по маске сегментации (покрытие: {coverage:P2})");
+                return;
+            }
+        }
+        
         // Проверяем, существует ли уже объект для этой плоскости
         if (!paintedWalls.TryGetValue(plane.trackableId, out GameObject wallObject))
         {
@@ -160,8 +175,11 @@ public class WallPainter : MonoBehaviour
             );
             
             // Создаем новый материал для этой стены
-            MeshRenderer wallRenderer = wallObject.GetComponent<MeshRenderer>();
-            wallRenderer.material = new Material(wallMaterial);
+            MeshRenderer rendererComponent = wallObject.GetComponent<MeshRenderer>();
+            rendererComponent.material = new Material(wallMaterial);
+            
+            // Настраиваем материал для корректной работы с прозрачностью
+            SetupMaterialForTransparency(rendererComponent.material);
             
             // Добавляем созданный объект в словарь
             paintedWalls.Add(plane.trackableId, wallObject);
@@ -170,30 +188,129 @@ public class WallPainter : MonoBehaviour
             wallColors[plane.trackableId] = currentColor;
             wallIntensities[plane.trackableId] = brushIntensity;
         }
+        
+        // Обновляем цвет существующего объекта
+        MeshRenderer meshRenderer = wallObject.GetComponent<MeshRenderer>();
+        
+        // Проверяем, не изменилась ли плоскость
+        Bounds meshBounds = plane.GetComponent<MeshFilter>().mesh.bounds;
+        wallObject.transform.localScale = new Vector3(
+            meshBounds.size.x,
+            meshBounds.size.y,
+            1.0f
+        );
+        
+        // Получаем локальную позицию точки касания относительно плоскости
+        Vector3 localHitPos = plane.transform.InverseTransformPoint(hitPose.position);
+        
+        // Рассчитываем нормализованные координаты для рисования в диапазоне 0-1
+        Vector3 planeCenter = meshBounds.center;
+        Vector3 planeSize = meshBounds.size;
+        
+        float normalizedX = (localHitPos.x - planeCenter.x + planeSize.x/2) / planeSize.x;
+        float normalizedY = (localHitPos.y - planeCenter.y + planeSize.y/2) / planeSize.y;
+        
+        // Применяем новый цвет с учетом кисти и точки касания
+        ApplyBrushToTexture(plane.trackableId, normalizedX, normalizedY);
+        
+        // Сохраняем текущий цвет и интенсивность для каждой стены
+        wallColors[plane.trackableId] = new Color(currentColor.r, currentColor.g, currentColor.b);
+        wallIntensities[plane.trackableId] = brushIntensity;
+    }
+    
+    // Настройка материала для корректной работы с прозрачностью
+    private void SetupMaterialForTransparency(Material material)
+    {
+        material.SetFloat("_Mode", 2); // Режим прозрачности
+        material.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+        material.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+        material.SetInt("_ZWrite", 0);
+        material.DisableKeyword("_ALPHATEST_ON");
+        material.EnableKeyword("_ALPHABLEND_ON");
+        material.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+        material.renderQueue = 3000;
+    }
+    
+    // Нанесение цвета на текстуру стены
+    private void ApplyBrushToTexture(TrackableId planeId, float normalizedX, float normalizedY)
+    {
+        if (!paintedWalls.TryGetValue(planeId, out GameObject wallObject))
+            return;
+            
+        MeshRenderer renderer = wallObject.GetComponent<MeshRenderer>();
+        if (renderer == null)
+            return;
+            
+        // Получаем размер текстуры
+        int textureSize = 512; // Рекомендуемый размер для текстуры покраски
+        
+        // Проверяем, есть ли у объекта пользовательская текстура для рисования
+        Texture2D paintTexture = null;
+        
+        // Получаем текущую текстуру или создаем новую
+        if (renderer.material.mainTexture != null && renderer.material.mainTexture is Texture2D)
+        {
+            paintTexture = renderer.material.mainTexture as Texture2D;
+        }
         else
         {
-            // Обновляем цвет существующего объекта
-            MeshRenderer wallRenderer = wallObject.GetComponent<MeshRenderer>();
+            paintTexture = new Texture2D(textureSize, textureSize, TextureFormat.RGBA32, false);
             
-            // Проверяем, не изменилась ли плоскость
-            Bounds planeBounds = plane.GetComponent<MeshFilter>().mesh.bounds;
-            wallObject.transform.localScale = new Vector3(
-                planeBounds.size.x,
-                planeBounds.size.y,
-                1.0f
-            );
+            // Заполняем текстуру прозрачным цветом
+            Color[] pixels = new Color[textureSize * textureSize];
+            for (int i = 0; i < pixels.Length; i++)
+            {
+                pixels[i] = new Color(1f, 1f, 1f, 0f); // Полностью прозрачный
+            }
+            paintTexture.SetPixels(pixels);
+            paintTexture.Apply();
             
-            // Применяем новый цвет с учетом кисти
-            Color currentMatColor = wallRenderer.material.color;
-            Color targetColor = new Color(currentColor.r, currentColor.g, currentColor.b, brushIntensity);
-            
-            // Плавно изменяем цвет
-            wallRenderer.material.color = Color.Lerp(currentMatColor, targetColor, Time.deltaTime * 5f);
-            
-            // Сохраняем текущий цвет и интенсивность для каждой стены
-            wallColors[plane.trackableId] = new Color(currentColor.r, currentColor.g, currentColor.b);
-            wallIntensities[plane.trackableId] = brushIntensity;
+            // Назначаем текстуру материалу
+            renderer.material.mainTexture = paintTexture;
         }
+        
+        // Рассчитываем радиус кисти в пикселях
+        int brushRadius = Mathf.RoundToInt(brushSize * textureSize / 2);
+        
+        // Рассчитываем координаты центра кисти в пикселях
+        int centerX = Mathf.RoundToInt(normalizedX * textureSize);
+        int centerY = Mathf.RoundToInt(normalizedY * textureSize);
+        
+        // Создаем цвет кисти
+        Color brushColor = new Color(currentColor.r, currentColor.g, currentColor.b, brushIntensity);
+        
+        // Рисуем кистью на текстуре
+        for (int y = centerY - brushRadius; y <= centerY + brushRadius; y++)
+        {
+            for (int x = centerX - brushRadius; x <= centerX + brushRadius; x++)
+            {
+                // Пропускаем пиксели за пределами текстуры
+                if (x < 0 || x >= textureSize || y < 0 || y >= textureSize)
+                    continue;
+                    
+                // Рассчитываем расстояние от текущего пикселя до центра кисти
+                float distance = Mathf.Sqrt((x - centerX) * (x - centerX) + (y - centerY) * (y - centerY));
+                
+                // Пропускаем пиксели за пределами радиуса кисти
+                if (distance > brushRadius)
+                    continue;
+                    
+                // Рассчитываем интенсивность цвета в зависимости от расстояния до центра
+                float intensity = 1f - (distance / brushRadius);
+                
+                // Получаем текущий цвет пикселя
+                Color pixelColor = paintTexture.GetPixel(x, y);
+                
+                // Смешиваем текущий цвет с цветом кисти
+                Color newColor = Color.Lerp(pixelColor, brushColor, intensity * brushIntensity);
+                
+                // Устанавливаем новый цвет пикселя
+                paintTexture.SetPixel(x, y, newColor);
+            }
+        }
+        
+        // Применяем изменения
+        paintTexture.Apply();
     }
     
     // Установка текущего цвета кисти
@@ -244,6 +361,32 @@ public class WallPainter : MonoBehaviour
             {
                 snapshot.AddWall(pair.Key, color, intensity);
             }
+        }
+        
+        // Создаем текстуру предпросмотра (для UI)
+        if (arCamera != null)
+        {
+            // Делаем снимок экрана для превью
+            RenderTexture tempRT = new RenderTexture(256, 256, 24);
+            RenderTexture prevRT = RenderTexture.active;
+            RenderTexture.active = tempRT;
+            arCamera.targetTexture = tempRT;
+            arCamera.Render();
+            
+            Texture2D previewTexture = new Texture2D(256, 256, TextureFormat.RGB24, false);
+            previewTexture.ReadPixels(new Rect(0, 0, 256, 256), 0, 0);
+            previewTexture.Apply();
+            
+            // Возвращаем настройки камеры
+            arCamera.targetTexture = null;
+            RenderTexture.active = prevRT;
+            tempRT.Release();
+            
+            // Сохраняем текстуру для этого снимка
+            if (snapshotPreviews.ContainsKey(snapshot.id))
+                snapshotPreviews[snapshot.id] = previewTexture;
+            else
+                snapshotPreviews.Add(snapshot.id, previewTexture);
         }
         
         // Добавляем снимок в список
@@ -329,17 +472,17 @@ public class WallPainter : MonoBehaviour
                 wallObject.transform.parent = plane.transform;
                 
                 // Масштабируем объект в соответствии с размерами плоскости
-                Bounds planeBounds = plane.GetComponent<MeshRenderer>().bounds;
+                Bounds meshBounds = plane.GetComponent<MeshRenderer>().bounds;
                 wallObject.transform.localScale = new Vector3(
-                    planeBounds.size.x,
-                    planeBounds.size.y,
+                    meshBounds.size.x,
+                    meshBounds.size.y,
                     1.0f
                 );
                 
                 // Настраиваем материал
-                MeshRenderer wallRenderer = wallObject.GetComponent<MeshRenderer>();
-                wallRenderer.material = new Material(wallMaterial);
-                wallRenderer.material.color = new Color(
+                MeshRenderer rendererComponent = wallObject.GetComponent<MeshRenderer>();
+                rendererComponent.material = new Material(wallMaterial);
+                rendererComponent.material.color = new Color(
                     wallData.color.r, 
                     wallData.color.g, 
                     wallData.color.b, 
@@ -364,6 +507,9 @@ public class WallPainter : MonoBehaviour
     // Получить список всех снимков
     public List<PaintSnapshot> GetSnapshots()
     {
+        if (savedSnapshots == null)
+            savedSnapshots = new List<PaintSnapshot>();
+            
         return savedSnapshots;
     }
     
@@ -371,5 +517,26 @@ public class WallPainter : MonoBehaviour
     public int GetCurrentSnapshotIndex()
     {
         return currentSnapshotIndex;
+    }
+    
+    // Получить текущий размер кисти
+    public float GetBrushSize()
+    {
+        return brushSize;
+    }
+    
+    // Получить текущую интенсивность кисти
+    public float GetBrushIntensity()
+    {
+        return brushIntensity;
+    }
+    
+    // Получить превью-текстуру для снимка по ID
+    public Texture2D GetSnapshotPreview(string snapshotId)
+    {
+        if (snapshotPreviews.TryGetValue(snapshotId, out Texture2D preview))
+            return preview;
+        
+        return null;
     }
 } 

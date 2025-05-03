@@ -3,7 +3,11 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
+using UnityEngine.XR.ARSubsystems; // Добавляем для использования TrackableId
 
+/// <summary>
+/// Управляет пользовательским интерфейсом для AR Wall Painting
+/// </summary>
 public class UIManager : MonoBehaviour
 {
     [Header("References")]
@@ -27,6 +31,32 @@ public class UIManager : MonoBehaviour
     [SerializeField] private GameObject snapshotButtonPrefab;
     [SerializeField] private TMP_InputField snapshotNameInput;
     
+    [Header("Paint Controls")]
+    [SerializeField] private Button redButton;
+    [SerializeField] private Button greenButton;
+    [SerializeField] private Button blueButton;
+    [SerializeField] private Button yellowButton;
+    [SerializeField] private Button whiteButton;
+    [SerializeField] private Toggle paintModeToggle;
+    
+    [Header("Snapshot Controls")]
+    [SerializeField] private Button takeSnapshotButton;
+    [SerializeField] private Button prevSnapshotButton;
+    [SerializeField] private Button nextSnapshotButton;
+    [SerializeField] private RawImage snapshotPreview;
+    [SerializeField] private Text snapshotCountText;
+    
+    [Header("Debug")]
+    [SerializeField] private Toggle showDebugToggle;
+    [SerializeField] private RawImage segmentationDebugImage;
+    
+    [Header("Color Settings")]
+    [SerializeField] private Color redColor = new Color(1f, 0f, 0f, 0.8f);
+    [SerializeField] private Color greenColor = new Color(0f, 0.8f, 0f, 0.8f);
+    [SerializeField] private Color blueColor = new Color(0f, 0f, 1f, 0.8f);
+    [SerializeField] private Color yellowColor = new Color(1f, 0.9f, 0f, 0.8f);
+    [SerializeField] private Color whiteColor = new Color(1f, 1f, 1f, 0.8f);
+    
     // Предопределенная палитра цветов
     private Color[] predefinedColors = new Color[]
     {
@@ -46,14 +76,27 @@ public class UIManager : MonoBehaviour
     
     private void Start()
     {
+        // Находим необходимые компоненты, если они не назначены
         if (wallPainter == null)
-            wallPainter = Object.FindAnyObjectByType<WallPainter>();
-        
-        if (wallSegmentation == null)
-            wallSegmentation = Object.FindAnyObjectByType<WallSegmentation>();
+            wallPainter = FindObjectOfType<WallPainter>();
             
-        // Инициализация UI элементов
-        InitializeUI();
+        if (wallSegmentation == null)
+            wallSegmentation = FindObjectOfType<WallSegmentation>();
+            
+        // Настраиваем кнопки выбора цвета
+        SetupColorButtons();
+        
+        // Настраиваем слайдеры
+        SetupSliders();
+        
+        // Настраиваем переключатели
+        SetupToggles();
+        
+        // Настраиваем кнопки снимков
+        SetupSnapshotButtons();
+        
+        // Обновляем интерфейс снимков
+        UpdateSnapshotUI();
         
         // По умолчанию скрываем палитру и панель снимков
         colorPalette.SetActive(false);
@@ -71,80 +114,192 @@ public class UIManager : MonoBehaviour
         }
     }
     
-    // Инициализация UI элементов
-    private void InitializeUI()
+    private void SetupColorButtons()
     {
-        // Настройка цветовых кнопок
-        if (colorButtons != null && colorButtons.Length > 0)
+        if (redButton != null)
+            redButton.onClick.AddListener(() => SetPaintColor(redColor));
+            
+        if (greenButton != null)
+            greenButton.onClick.AddListener(() => SetPaintColor(greenColor));
+            
+        if (blueButton != null)
+            blueButton.onClick.AddListener(() => SetPaintColor(blueColor));
+            
+        if (yellowButton != null)
+            yellowButton.onClick.AddListener(() => SetPaintColor(yellowColor));
+            
+        if (whiteButton != null)
+            whiteButton.onClick.AddListener(() => SetPaintColor(whiteColor));
+    }
+    
+    private void SetupSliders()
+    {
+        if (brushSizeSlider != null)
         {
-            for (int i = 0; i < colorButtons.Length; i++)
+            // Настраиваем начальное значение
+            brushSizeSlider.value = wallPainter != null ? wallPainter.GetBrushSize() : 0.2f;
+            
+            // Добавляем обработчик изменения
+            brushSizeSlider.onValueChanged.AddListener(OnBrushSizeChanged);
+        }
+        
+        if (intensitySlider != null)
+        {
+            // Настраиваем начальное значение
+            intensitySlider.value = wallPainter != null ? wallPainter.GetBrushIntensity() : 0.8f;
+            
+            // Добавляем обработчик изменения
+            intensitySlider.onValueChanged.AddListener(OnIntensityChanged);
+        }
+    }
+    
+    private void SetupToggles()
+    {
+        if (paintModeToggle != null)
+        {
+            paintModeToggle.onValueChanged.AddListener(OnPaintModeChanged);
+        }
+        
+        if (showDebugToggle != null && wallSegmentation != null)
+        {
+            showDebugToggle.isOn = wallSegmentation.IsDebugVisualizationEnabled();
+            showDebugToggle.onValueChanged.AddListener(OnDebugToggleChanged);
+        }
+    }
+    
+    private void SetupSnapshotButtons()
+    {
+        if (takeSnapshotButton != null)
+            takeSnapshotButton.onClick.AddListener(OnTakeSnapshotClicked);
+            
+        if (prevSnapshotButton != null)
+            prevSnapshotButton.onClick.AddListener(OnPrevSnapshotClicked);
+            
+        if (nextSnapshotButton != null)
+            nextSnapshotButton.onClick.AddListener(OnNextSnapshotClicked);
+    }
+    
+    public void SetPaintColor(Color color)
+    {
+        if (wallPainter != null)
+        {
+            wallPainter.SetColor(color);
+            Debug.Log($"Установлен цвет: R:{color.r}, G:{color.g}, B:{color.b}, A:{color.a}");
+        }
+    }
+    
+    private void OnBrushSizeChanged(float size)
+    {
+        if (wallPainter != null)
+        {
+            wallPainter.SetBrushSize(size);
+            Debug.Log($"Установлен размер кисти: {size}");
+        }
+    }
+    
+    private void OnIntensityChanged(float intensity)
+    {
+        if (wallPainter != null)
+        {
+            wallPainter.SetBrushIntensity(intensity);
+            Debug.Log($"Установлена интенсивность кисти: {intensity}");
+        }
+    }
+    
+    private void OnPaintModeChanged(bool isOn)
+    {
+        if (wallPainter != null)
+        {
+            if (isOn)
+                wallPainter.StartPainting();
+            else
+                wallPainter.StopPainting();
+                
+            Debug.Log($"Режим рисования: {(isOn ? "Включен" : "Выключен")}");
+        }
+    }
+    
+    private void OnDebugToggleChanged(bool isOn)
+    {
+        if (wallSegmentation != null)
+        {
+            wallSegmentation.EnableDebugVisualization(isOn);
+            Debug.Log($"Отладочная визуализация: {(isOn ? "Включена" : "Выключена")}");
+        }
+    }
+    
+    private void OnTakeSnapshotClicked()
+    {
+        if (wallPainter != null)
+        {
+            wallPainter.CreateNewSnapshot($"Снимок {System.DateTime.Now.ToString("HH:mm:ss")}");
+            UpdateSnapshotUI();
+        }
+    }
+    
+    private void OnPrevSnapshotClicked()
+    {
+        if (wallPainter != null)
+        {
+            int currentIndex = wallPainter.GetCurrentSnapshotIndex();
+            if (currentIndex > 0)
             {
-                if (colorButtons[i] != null)
+                wallPainter.LoadSnapshot(currentIndex - 1);
+                UpdateSnapshotUI();
+            }
+        }
+    }
+    
+    private void OnNextSnapshotClicked()
+    {
+        if (wallPainter != null)
+        {
+            int currentIndex = wallPainter.GetCurrentSnapshotIndex();
+            int snapshotCount = wallPainter.GetSnapshots().Count;
+            
+            if (currentIndex < snapshotCount - 1)
+            {
+                wallPainter.LoadSnapshot(currentIndex + 1);
+                UpdateSnapshotUI();
+            }
+        }
+    }
+    
+    private void UpdateSnapshotUI()
+    {
+        if (wallPainter == null)
+            return;
+            
+        List<PaintSnapshot> snapshots = wallPainter.GetSnapshots();
+        int currentIndex = wallPainter.GetCurrentSnapshotIndex();
+        
+        // Обновляем текст с количеством снимков
+        if (snapshotCountText != null)
+        {
+            snapshotCountText.text = $"Снимок {currentIndex + 1}/{snapshots.Count}";
+        }
+        
+        // Обновляем превью снимка
+        if (snapshotPreview != null && currentIndex >= 0 && currentIndex < snapshots.Count)
+        {
+            PaintSnapshot currentSnapshot = snapshots[currentIndex];
+            if (currentSnapshot != null)
+            {
+                // Получаем превью для текущего снимка
+                Texture2D previewTexture = wallPainter.GetSnapshotPreview(currentSnapshot.id);
+                if (previewTexture != null)
                 {
-                    // Устанавливаем цвет кнопки из палитры
-                    int colorIndex = i % predefinedColors.Length;
-                    Color buttonColor = predefinedColors[colorIndex];
-                    
-                    // Устанавливаем цвет фона кнопки
-                    Image buttonImage = colorButtons[i].GetComponent<Image>();
-                    if (buttonImage != null)
-                    {
-                        buttonImage.color = buttonColor;
-                    }
-                    
-                    // Добавляем обработчик нажатия
-                    int capturedIndex = colorIndex; // Необходимо для замыкания
-                    colorButtons[i].onClick.AddListener(() => OnColorButtonClick(capturedIndex));
+                    snapshotPreview.texture = previewTexture;
                 }
             }
         }
         
-        // Настройка слайдера размера кисти
-        if (brushSizeSlider != null)
-        {
-            brushSizeSlider.minValue = 0.05f;
-            brushSizeSlider.maxValue = 0.5f;
-            brushSizeSlider.value = 0.2f;
-            brushSizeSlider.onValueChanged.AddListener(OnBrushSizeChanged);
-        }
-        
-        // Настройка слайдера интенсивности
-        if (intensitySlider != null)
-        {
-            intensitySlider.minValue = 0f;
-            intensitySlider.maxValue = 1f;
-            intensitySlider.value = 0.8f;
-            intensitySlider.onValueChanged.AddListener(OnIntensityChanged);
-        }
-        
-        // Настройка кнопки сброса
-        if (resetButton != null)
-        {
-            resetButton.onClick.AddListener(OnResetButtonClick);
-        }
-        
-        // Настройка кнопки переключения палитры
-        if (togglePaletteButton != null)
-        {
-            togglePaletteButton.onClick.AddListener(OnTogglePaletteButtonClick);
-        }
-        
-        // Настройка кнопок снимков
-        if (createSnapshotButton != null)
-        {
-            createSnapshotButton.onClick.AddListener(OnCreateSnapshotButtonClick);
-        }
-        
-        if (toggleSnapshotPanelButton != null)
-        {
-            toggleSnapshotPanelButton.onClick.AddListener(OnToggleSnapshotPanelButtonClick);
-        }
-        
-        // Устанавливаем текст по умолчанию
-        if (statusText != null)
-        {
-            statusText.text = "Сканируйте окружение...";
-        }
+        // Обновляем доступность кнопок
+        if (prevSnapshotButton != null)
+            prevSnapshotButton.interactable = currentIndex > 0;
+            
+        if (nextSnapshotButton != null)
+            nextSnapshotButton.interactable = currentIndex < snapshots.Count - 1;
     }
     
     // Обновление UI при обнаружении стен
@@ -165,22 +320,6 @@ public class UIManager : MonoBehaviour
         if (wallPainter != null)
         {
             wallPainter.SetColor(predefinedColors[colorIndex]);
-        }
-    }
-    
-    private void OnBrushSizeChanged(float size)
-    {
-        if (wallPainter != null)
-        {
-            wallPainter.SetBrushSize(size);
-        }
-    }
-    
-    private void OnIntensityChanged(float intensity)
-    {
-        if (wallPainter != null)
-        {
-            wallPainter.SetBrushIntensity(intensity);
         }
     }
     

@@ -122,6 +122,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1d588172190e56448a4365c188f85248, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  horizontalColor: {r: 0, g: 0.5, b: 1, a: 0.3}
-  verticalColor: {r: 1, g: 0.5, b: 0, a: 0.3}
-  unknownColor: {r: 0.5, g: 0.5, b: 0.5, a: 0.3}
+  verticalPlaneMaterial: {fileID: 0}
+  horizontalPlaneMaterial: {fileID: 0}
+  wallColor: {r: 0.7, g: 0.4, b: 0.2, a: 0.7}
+  floorColor: {r: 0.2, g: 0.2, b: 0.8, a: 0.7}
+  ceilingColor: {r: 0.2, g: 0.7, b: 0.2, a: 0.7}
+  useExactPlacement: 1
+  extendWalls: 0
+  minWallHeight: 2
+  offsetFromSurface: 0.005
+  debugPositioning: 0
