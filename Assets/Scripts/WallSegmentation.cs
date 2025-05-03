@@ -27,18 +27,18 @@ public class WallSegmentation : MonoBehaviour
     
     [Header("Segmentation Mode")]
     [SerializeField] private SegmentationMode currentMode = SegmentationMode.ExternalModel;
-    [SerializeField] private string externalModelPath = "model.onnx"; // Путь относительно StreamingAssets
+    [SerializeField] private string externalModelPath = "BiseNet.onnx"; // Изменено на новую модель BiseNet
     
     [Header("Barracuda Model")]
     [SerializeField] private NNModel embeddedModelAsset; // Модель, привязанная в Unity
-    [SerializeField] private string inputName = "ImageTensor"; // Имя входного слоя в ONNX-модели
-    [SerializeField] private string outputName = "final_result"; // Имя выходного слоя в ONNX-модели
+    [SerializeField] private string inputName = "input"; // Обновлено под BiseNet
+    [SerializeField] private string outputName = "output"; // Обновлено под BiseNet
     
     [Header("Segmentation Parameters")]
-    [SerializeField] private int inputWidth = 256;
-    [SerializeField] private int inputHeight = 256;
+    [SerializeField] private int inputWidth = 960; // Обновлено под размер входа BiseNet
+    [SerializeField] private int inputHeight = 720; // Обновлено под размер входа BiseNet
     [SerializeField] private float threshold = 0.5f;
-    [SerializeField] private int wallClassIndex = 1; // Индекс класса "стена" (может отличаться в зависимости от модели)
+    [SerializeField] private int wallClassIndex = 12; // Обновлено на класс "wall" в наборе Cityscapes
     
     [Header("Debug & Performance")]
     [SerializeField] private bool forceDemoMode = false; // Принудительно использовать демо-режим вместо ML
@@ -333,227 +333,145 @@ public class WallSegmentation : MonoBehaviour
             }
         }
         
-        // Проверяем размер входного изображения
-        if (inputTexture.width != inputWidth || inputTexture.height != inputHeight)
-        {
-            Texture2D resizedTexture = new Texture2D(inputWidth, inputHeight, TextureFormat.RGB24, false);
-            
-            // Создаем временный RenderTexture для масштабирования
-            RenderTexture rt = RenderTexture.GetTemporary(inputWidth, inputHeight, 24);
-            Graphics.Blit(inputTexture, rt);
-            
-            // Сохраняем текущий RenderTexture
-            RenderTexture activeRT = RenderTexture.active;
-            RenderTexture.active = rt;
-            
-            // Копируем содержимое в новую текстуру
-            resizedTexture.ReadPixels(new Rect(0, 0, inputWidth, inputHeight), 0, 0);
-            resizedTexture.Apply();
-            
-            // Восстанавливаем активный RenderTexture
-            RenderTexture.active = activeRT;
-            RenderTexture.ReleaseTemporary(rt);
-            
-            // Заменяем исходную текстуру
-            inputTexture = resizedTexture;
-        }
+        // Подготавливаем входное изображение к размеру, требуемому BiseNet (960x720)
+        Texture2D resizedTexture = new Texture2D(inputWidth, inputHeight, TextureFormat.RGB24, false);
         
-        // Создаем новый тензор
+        // Создаем временный RenderTexture для масштабирования
+        RenderTexture rt = RenderTexture.GetTemporary(inputWidth, inputHeight, 24);
+        Graphics.Blit(inputTexture, rt);
+        
+        // Сохраняем текущий RenderTexture
+        RenderTexture activeRT = RenderTexture.active;
+        RenderTexture.active = rt;
+        
+        // Копируем содержимое в новую текстуру
+        resizedTexture.ReadPixels(new Rect(0, 0, inputWidth, inputHeight), 0, 0);
+        resizedTexture.Apply();
+        
+        // Восстанавливаем активный RenderTexture
+        RenderTexture.active = activeRT;
+        RenderTexture.ReleaseTemporary(rt);
+        
+        // Создаем входной тензор - BiseNet ожидает формат [1,3,720,960]
         try
         {
-            // Используем корректный формат для входного тензора
-            inputTensor = new Tensor(inputTexture, channels: 3);
-            
-            // Проверяем размерность входного тензора
-            Debug.Log($"Входной тензор: {inputTensor.shape}");
-            
-            // Проверка на соответствие формата входных данных ожидаемому формату модели
-            // 232960 / 3 = 77653.33, что не кратно 144, поэтому изменяем входной тензор
-            
-            // Выбираем размер, который должен быть кратен 144
-            int modelInputSize = 144; // Размер, который ожидает модель
-            int channelCount = 3; // RGB
-            
-            // Создаем новую текстуру с размерами, точно кратными 144
-            int newWidth = 576; // 576 = 144 * 4
-            int newHeight = 576; // 576 = 144 * 4
-            // 576 * 576 * 3 = 995328, что делится на 144 (= 6912)
-            
-            // Ресайзим текстуру в соответствии с требованиями модели
-            Texture2D modelInputTexture = new Texture2D(newWidth, newHeight, TextureFormat.RGB24, false);
-            RenderTexture rt = RenderTexture.GetTemporary(newWidth, newHeight, 24);
-            Graphics.Blit(inputTexture, rt);
-            RenderTexture prevRT = RenderTexture.active;
-            RenderTexture.active = rt;
-            modelInputTexture.ReadPixels(new Rect(0, 0, newWidth, newHeight), 0, 0);
-            modelInputTexture.Apply();
-            RenderTexture.active = prevRT;
-            RenderTexture.ReleaseTemporary(rt);
-            
-            // Освобождаем предыдущий тензор для предотвращения утечек
+            // Освобождаем предыдущий тензор, если он существует
             if (inputTensor != null)
             {
                 inputTensor.Dispose();
                 inputTensor = null;
             }
             
-            // Создаем новый тензор с правильными размерами
-            inputTensor = new Tensor(modelInputTexture, channels: channelCount);
+            // Создаем тензор в формате NCHW (batch, channels, height, width)
+            inputTensor = new Tensor(resizedTexture, channels: 3);
             
-            // Проверяем размерность нового тензора
-            Debug.Log($"Исправленный тензор: {inputTensor.shape}");
-            
-            // Уничтожаем временную текстуру после создания тензора
-            Destroy(modelInputTexture);
-            
-            // Проверка, что размер тензора соответствует ожиданиям модели
-            int tensorSize = inputTensor.shape.length;
-            if (tensorSize % modelInputSize != 0)
-            {
-                Debug.LogError($"Размер тензора {tensorSize} не кратен {modelInputSize}. Переключаемся на демо-режим.");
-                inputTensor.Dispose();
-                inputTensor = null;
-                errorCount += 3; // Сразу увеличиваем счетчик ошибок для принудительного переключения в демо-режим
-                return GenerateDemoSegmentation(inputTexture);
-            }
+            Debug.Log($"Создан входной тензор для BiseNet: {inputTensor.shape}");
             
             Tensor outputTensor = null;
             try
             {
-                using (var output = worker.Execute(inputTensor).PeekOutput(outputName))
+                // Запускаем инференс модели
+                worker.Execute(inputTensor);
+                var output = worker.PeekOutput(outputName);
+                Debug.Log($"Получен выходной тензор: {output.shape}");
+                
+                // Создаем результирующую текстуру для сегментированного изображения
+                Texture2D resultTexture = new Texture2D(inputWidth, inputHeight, TextureFormat.RGBA32, false);
+                
+                // Интерпретируем результат для BiseNet (маска классов)
+                int numClasses = output.shape[1]; // Количество классов в выходном слое
+                
+                // Обрабатываем результат сегментации
+                for (int y = 0; y < inputHeight; y++)
                 {
-                    outputTensor = output.DeepCopy();
-                    Debug.Log($"Выходной тензор: {output.shape}");
-                    
-                    // Создаем результирующую текстуру для сегментированного изображения
-                    Texture2D outputTexture = new Texture2D(inputWidth, inputHeight, TextureFormat.RGBA32, false);
-                    
-                    try
+                    for (int x = 0; x < inputWidth; x++)
                     {
-                        // Размеры выходного тензора могут отличаться от ожидаемых
-                        // Получаем фактические размеры выходного тензора
-                        int outHeight = output.shape.height;
-                        int outWidth = output.shape.width;
+                        // Находим класс с максимальной вероятностью в данной точке
+                        float maxVal = float.MinValue;
+                        int bestClass = 0;
                         
-                        // Обрабатываем результат сегментации с учетом фактических размеров
-                        for (int y = 0; y < inputHeight; y++)
+                        for (int c = 0; c < numClasses; c++)
                         {
-                            for (int x = 0; x < inputWidth; x++)
+                            // BiseNet возвращает scores для каждого класса в данной точке
+                            float value = output[0, c, y, x];
+                            if (value > maxVal)
                             {
-                                // Пересчитываем координаты для выходного тензора
-                                int tensorY = Mathf.Min(y * outHeight / inputHeight, outHeight - 1);
-                                int tensorX = Mathf.Min(x * outWidth / inputWidth, outWidth - 1);
-                                
-                                float value = 0;
-                                
-                                // Получаем значение из тензора с проверкой на корректность индексов и размерности
-                                if (output.shape.channels > 1)
-                                {
-                                    // Для многоканального выхода берем канал wallClassIndex
-                                    if (wallClassIndex < output.shape.channels)
-                                    {
-                                        value = output[0, tensorY, tensorX, wallClassIndex];
-                                    }
-                                }
-                                else
-                                {
-                                    // Для одноканального выхода берем единственный канал
-                                    value = output[0, tensorY, tensorX, 0];
-                                }
-                                
-                                // Применяем порог для определения стены
-                                Color pixelColor = value > threshold 
-                                    ? new Color(1, 1, 1, 1) // Белый для стены
-                                    : new Color(0, 0, 0, 0); // Прозрачный для не-стены
-                                
-                                outputTexture.SetPixel(x, y, pixelColor);
+                                maxVal = value;
+                                bestClass = c;
                             }
                         }
-                    }
-                    catch (System.Exception e)
-                    {
-                        Debug.LogWarning($"Ошибка при обработке выходного тензора: {e.Message}");
                         
-                        // Заполняем текстуру случайными значениями для демонстрационных целей
-                        for (int y = 0; y < inputHeight; y++)
+                        // Цветовая схема для классов Cityscapes
+                        Color pixelColor = Color.black;
+                        
+                        // Если этот пиксель распознан как стена (wallClassIndex)
+                        if (bestClass == wallClassIndex)
                         {
-                            for (int x = 0; x < inputWidth; x++)
-                            {
-                                // Генерируем простой паттерн для отладки
-                                bool isWall = (x / 50 + y / 50) % 2 == 0;
-                                Color pixelColor = isWall
-                                    ? new Color(1, 1, 1, 1) // Белый для стены
-                                    : new Color(0, 0, 0, 0); // Прозрачный для не-стены
-                                
-                                outputTexture.SetPixel(x, y, pixelColor);
-                            }
+                            pixelColor = new Color(0.2f, 0.5f, 0.9f, 0.8f); // Синий для стен
                         }
+                        else
+                        {
+                            // Разные цвета для других классов для отладки
+                            float hue = (float)bestClass / numClasses;
+                            pixelColor = Color.HSVToRGB(hue, 0.7f, 0.3f);
+                            pixelColor.a = 0.3f; // Полупрозрачный для не-стен
+                        }
+                        
+                        resultTexture.SetPixel(x, y, pixelColor);
                     }
-                    
-                    outputTexture.Apply();
-                    
-                    // Освобождаем тензор после использования
-                    if (outputTensor != null)
-                    {
-                        outputTensor.Dispose();
-                        outputTensor = null;
-                    }
-                    
-                    return outputTexture;
                 }
+                
+                resultTexture.Apply();
+                
+                // Очищаем ресурсы
+                Destroy(resizedTexture);
+                
+                Debug.Log("BiseNet сегментация успешно выполнена");
+                return resultTexture;
             }
             catch (System.Exception e)
             {
-                // Освобождаем тензоры в случае ошибки
+                Debug.LogError($"Ошибка при выполнении инференса: {e.Message}");
+                errorCount++;
+                
+                // Если превышено количество ошибок, переключаемся на демо-режим
+                if (errorCount > 3)
+                {
+                    Debug.LogWarning("Превышено количество ошибок сегментации. Переключение в демо-режим.");
+                    useDemoMode = true;
+                }
+            }
+            finally
+            {
                 if (outputTensor != null)
                 {
                     outputTensor.Dispose();
-                    outputTensor = null;
                 }
-                
-                if (inputTensor != null)
-                {
-                    inputTensor.Dispose();
-                    inputTensor = null;
-                }
-                
-                Debug.LogError($"Ошибка при обработке изображения через нейросеть: {e.Message}\n{e.StackTrace}");
-                errorCount++;
-                
-                // Если произошло несколько ошибок подряд, переключаемся на демо-режим
-                if (errorCount > 3)
-                {
-                    Debug.LogWarning("Слишком много ошибок нейросети. Переключаемся на демо-режим сегментации.");
-                    useDemoMode = true;
-                    return GenerateDemoSegmentation(inputTexture);
-                }
-                
-                return null;
             }
         }
         catch (System.Exception e)
         {
-            // Здесь обрабатываются ошибки подготовительного этапа (не связанные с выполнением модели)
-            Debug.LogError($"Ошибка подготовки входных данных: {e.Message}\n{e.StackTrace}");
+            Debug.LogError($"Ошибка при подготовке тензоров: {e.Message}");
+            errorCount++;
             
+            // Если превышено количество ошибок, переключаемся на демо-режим
+            if (errorCount > 3)
+            {
+                Debug.LogWarning("Превышено количество ошибок сегментации. Переключение в демо-режим.");
+                useDemoMode = true;
+            }
+        }
+        finally
+        {
             if (inputTensor != null)
             {
                 inputTensor.Dispose();
                 inputTensor = null;
             }
-            
-            errorCount++;
-            
-            // Если произошло несколько ошибок подряд, переключаемся на демо-режим
-            if (errorCount > 3)
-            {
-                Debug.LogWarning("Слишком много ошибок при подготовке данных. Переключаемся на демо-режим сегментации.");
-                useDemoMode = true;
-                return GenerateDemoSegmentation(inputTexture);
-            }
-            
-            return null;
         }
+        
+        // В случае ошибки возвращаем демо-сегментацию
+        return GenerateDemoSegmentation(inputTexture);
     }
     
     // Генерация демонстрационной сегментации без использования ML
