@@ -5,17 +5,21 @@ using UnityEngine.XR.ARFoundation;
 using UnityEngine.UI;
 using Unity.Barracuda;
 using System.Linq;
+using Unity.XR.CoreUtils;
 
+/// <summary>
+/// Компонент для сегментации стен с использованием нейросети
+/// </summary>
 public class WallSegmentation : MonoBehaviour
 {
     [Header("AR Components")]
     [SerializeField] private ARCameraManager cameraManager;
-    [SerializeField] private ARSessionOrigin sessionOrigin;
+    [SerializeField] private Camera arCamera;
     
     [Header("Barracuda Model")]
     [SerializeField] private NNModel modelAsset;
-    [SerializeField] private string inputName = "ImageTensor";
-    [SerializeField] private string outputName = "final_result";
+    [SerializeField] private string inputName = "ImageTensor"; // Имя входного слоя в ONNX-модели
+    [SerializeField] private string outputName = "final_result"; // Имя выходного слоя в ONNX-модели
     
     [Header("Segmentation Parameters")]
     [SerializeField] private int inputWidth = 513;
@@ -33,21 +37,35 @@ public class WallSegmentation : MonoBehaviour
     private Model model;
     private IWorker worker;
     private bool isProcessing;
+    private Tensor inputTensor;
     
     // Инициализация
     private void Start()
     {
         if (cameraManager == null)
-            cameraManager = FindObjectOfType<ARCameraManager>();
+            cameraManager = UnityEngine.Object.FindAnyObjectByType<ARCameraManager>();
             
-        if (sessionOrigin == null)
-            sessionOrigin = FindObjectOfType<ARSessionOrigin>();
+        if (arCamera == null)
+        {
+            // Ищем камеру через XROrigin
+            var xrOrigin = UnityEngine.Object.FindAnyObjectByType<XROrigin>();
+            if (xrOrigin != null && xrOrigin.Camera != null)
+            {
+                arCamera = xrOrigin.Camera;
+            }
+            else
+            {
+                // Попробуем найти камеру в сцене
+                arCamera = Camera.main;
+                if (arCamera == null)
+                {
+                    Debug.LogError("Не удалось найти AR камеру для сегментации стен");
+                }
+            }
+        }
             
         // Подписка на событие обновления текстуры камеры
         cameraManager.frameReceived += OnCameraFrameReceived;
-        
-        // Инициализация барракуды
-        InitializeModel();
         
         // Создаем текстуру для сегментации
         segmentationTexture = new Texture2D(Screen.width, Screen.height, TextureFormat.RGBA32, false);
@@ -86,134 +104,166 @@ public class WallSegmentation : MonoBehaviour
         cameraTexture.Apply();
         
         // Выполняем сегментацию
-        RunSegmentation(cameraTexture);
+        Texture2D result = RunSegmentation(cameraTexture);
+        
+        if (result != null)
+        {
+            // Обновляем текстуру сегментации
+            segmentationTexture.SetPixels(0, 0, inputWidth, inputHeight, result.GetPixels());
+            segmentationTexture.Apply();
+            
+            // Отображаем результат для отладки
+            if (showDebugVisualisation && debugImage != null) 
+            {
+                debugImage.texture = segmentationTexture;
+            }
+        }
         
         isProcessing = false;
     }
     
     // Выполнение сегментации с помощью Barracuda
-    private void RunSegmentation(Texture2D inputTexture)
+    private Texture2D RunSegmentation(Texture2D inputTexture)
     {
-        // Изменение размера и нормализация входных данных
-        Tensor input = PrepareInput(inputTexture);
-        
-        // Выполнение инференса
-        worker.Execute(input);
-        
-        // Получение результатов
-        Tensor output = worker.PeekOutput(outputName);
-        
-        // Обработка результатов сегментации
-        ProcessSegmentationResults(output);
-        
-        // Освобождение ресурсов
-        input.Dispose();
-    }
-    
-    // Подготовка входных данных для модели
-    private Tensor PrepareInput(Texture2D texture)
-    {
-        // Преобразуем текстуру к нужному размеру
-        Texture2D resizedTexture = ResizeTexture(texture, inputWidth, inputHeight);
-        
-        // Преобразуем в тензор с нормализацией
-        float[] inputData = new float[inputWidth * inputHeight * 3];
-        
-        Color[] pixels = resizedTexture.GetPixels();
-        for (int i = 0; i < pixels.Length; i++)
+        if (modelAsset == null)
         {
-            // Нормализация к диапазону [-1, 1] или [0, 1] в зависимости от модели
-            inputData[i * 3 + 0] = (pixels[i].r - 0.5f) * 2.0f;
-            inputData[i * 3 + 1] = (pixels[i].g - 0.5f) * 2.0f;
-            inputData[i * 3 + 2] = (pixels[i].b - 0.5f) * 2.0f;
+            Debug.LogError("Модель ONNX не загружена или имеет неправильный формат");
+            return null;
         }
         
-        return new Tensor(1, inputHeight, inputWidth, 3, inputData);
-    }
-    
-    // Изменение размера текстуры
-    private Texture2D ResizeTexture(Texture2D source, int targetWidth, int targetHeight)
-    {
-        RenderTexture rt = RenderTexture.GetTemporary(targetWidth, targetHeight);
-        Graphics.Blit(source, rt);
-        
-        RenderTexture prevActive = RenderTexture.active;
-        RenderTexture.active = rt;
-        
-        Texture2D result = new Texture2D(targetWidth, targetHeight);
-        result.ReadPixels(new Rect(0, 0, targetWidth, targetHeight), 0, 0);
-        result.Apply();
-        
-        RenderTexture.active = prevActive;
-        RenderTexture.ReleaseTemporary(rt);
-        
-        return result;
-    }
-    
-    // Обработка результатов сегментации
-    private void ProcessSegmentationResults(Tensor output)
-    {
-        // Обработка зависит от формата выходных данных вашей модели
-        // Это пример для модели с многоклассовой сегментацией
-        
-        int outputWidth = output.width;
-        int outputHeight = output.height;
-        int numClasses = output.channels;
-        
-        Color[] segmentationColors = new Color[outputWidth * outputHeight];
-        
-        // Для каждого пикселя выходного изображения
-        for (int y = 0; y < outputHeight; y++) 
+        if (worker == null)
         {
-            for (int x = 0; x < outputWidth; x++) 
+            try
             {
-                int maxClassIndex = 0;
-                float maxConfidence = 0;
-                
-                // Находим класс с максимальной уверенностью
-                for (int c = 0; c < numClasses; c++) 
-                {
-                    float confidence = output[0, y, x, c];
-                    if (confidence > maxConfidence) 
-                    {
-                        maxConfidence = confidence;
-                        maxClassIndex = c;
-                    }
-                }
-                
-                // Если это класс "стена" и уверенность > порога
-                if (maxClassIndex == wallClassIndex && maxConfidence > threshold) 
-                {
-                    // Отмечаем как стену (красный цвет для отладки)
-                    segmentationColors[y * outputWidth + x] = new Color(1, 0, 0, 0.5f);
-                } 
-                else 
-                {
-                    // Прозрачный цвет для не-стен
-                    segmentationColors[y * outputWidth + x] = new Color(0, 0, 0, 0);
-                }
+                model = ModelLoader.Load(modelAsset);
+                worker = WorkerFactory.CreateWorker(WorkerFactory.Type.Auto, model);
+                Debug.Log("Barracuda worker создан успешно");
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogError($"Ошибка при создании Barracuda worker: {e.Message}");
+                return null;
             }
         }
         
-        // Обновляем текстуру сегментации
-        segmentationTexture.SetPixels(0, 0, outputWidth, outputHeight, segmentationColors);
-        segmentationTexture.Apply();
-        
-        // Отображаем результат для отладки
-        if (showDebugVisualisation && debugImage != null) 
+        // Проверяем размер входного изображения
+        if (inputTexture.width != inputWidth || inputTexture.height != inputHeight)
         {
-            debugImage.texture = segmentationTexture;
+            Texture2D resizedTexture = new Texture2D(inputWidth, inputHeight, TextureFormat.RGB24, false);
+            
+            // Создаем временный RenderTexture для масштабирования
+            RenderTexture rt = RenderTexture.GetTemporary(inputWidth, inputHeight, 24);
+            Graphics.Blit(inputTexture, rt);
+            
+            // Сохраняем текущий RenderTexture
+            RenderTexture activeRT = RenderTexture.active;
+            RenderTexture.active = rt;
+            
+            // Копируем содержимое в новую текстуру
+            resizedTexture.ReadPixels(new Rect(0, 0, inputWidth, inputHeight), 0, 0);
+            resizedTexture.Apply();
+            
+            // Восстанавливаем активный RenderTexture
+            RenderTexture.active = activeRT;
+            RenderTexture.ReleaseTemporary(rt);
+            
+            // Заменяем исходную текстуру
+            inputTexture = resizedTexture;
+        }
+        
+        // Освобождаем предыдущий тензор, если он существует
+        if (inputTensor != null)
+        {
+            inputTensor.Dispose();
+            inputTensor = null;
+        }
+        
+        // Создаем новый тензор
+        try
+        {
+            // Используем корректный формат для входного тензора
+            inputTensor = new Tensor(inputTexture, channels: 3);
+            
+            // Проверяем размерность входного тензора
+            Debug.Log($"Входной тензор: {inputTensor.shape}");
+            
+            using (var output = worker.Execute(inputTensor).PeekOutput(outputName))
+            {
+                Debug.Log($"Выходной тензор: {output.shape}");
+                
+                // Создаем результирующую текстуру для сегментированного изображения
+                Texture2D outputTexture = new Texture2D(inputWidth, inputHeight, TextureFormat.RGBA32, false);
+                
+                // Обрабатываем результат сегментации
+                for (int y = 0; y < inputHeight; y++)
+                {
+                    for (int x = 0; x < inputWidth; x++)
+                    {
+                        float value = output[0, y, x, 0]; // Предполагается, что выход - одноканальная карта вероятностей
+                        
+                        // Применяем порог для определения стены
+                        Color pixelColor = value > threshold 
+                            ? new Color(1, 1, 1, 1) // Белый для стены
+                            : new Color(0, 0, 0, 0); // Прозрачный для не-стены
+                        
+                        outputTexture.SetPixel(x, y, pixelColor);
+                    }
+                }
+                
+                outputTexture.Apply();
+                return outputTexture;
+            }
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"Ошибка при обработке изображения через нейросеть: {e.Message}\n{e.StackTrace}");
+            return null;
         }
     }
     
     // Освобождение ресурсов
     private void OnDestroy()
     {
+        // Освобождаем ресурсы Barracuda
+        if (inputTensor != null)
+        {
+            inputTensor.Dispose();
+            inputTensor = null;
+        }
+        
         if (worker != null)
         {
             worker.Dispose();
+            worker = null;
         }
         
-        cameraManager.frameReceived -= OnCameraFrameReceived;
+        // Освобождаем остальные ресурсы
+        if (segmentationTexture != null)
+        {
+            Destroy(segmentationTexture);
+            segmentationTexture = null;
+        }
+        
+        if (cameraManager != null)
+        {
+            cameraManager.frameReceived -= OnCameraFrameReceived;
+        }
+    }
+
+    // Добавляем метод OnDisable для надежного освобождения ресурсов
+    private void OnDisable()
+    {
+        // Освобождаем ресурсы Barracuda
+        if (inputTensor != null)
+        {
+            inputTensor.Dispose();
+            inputTensor = null;
+        }
+        
+        if (worker != null)
+        {
+            worker.Dispose();
+            worker = null;
+        }
     }
 } 

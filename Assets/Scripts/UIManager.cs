@@ -19,6 +19,14 @@ public class UIManager : MonoBehaviour
     [SerializeField] private Button togglePaletteButton;
     [SerializeField] private TextMeshProUGUI statusText;
     
+    [Header("Snapshot UI")]
+    [SerializeField] private GameObject snapshotPanel;
+    [SerializeField] private Button createSnapshotButton;
+    [SerializeField] private Button toggleSnapshotPanelButton;
+    [SerializeField] private Transform snapshotContainer;
+    [SerializeField] private GameObject snapshotButtonPrefab;
+    [SerializeField] private TMP_InputField snapshotNameInput;
+    
     // Предопределенная палитра цветов
     private Color[] predefinedColors = new Color[]
     {
@@ -33,145 +41,270 @@ public class UIManager : MonoBehaviour
     };
     
     private bool isPaletteVisible = false;
+    private bool isSnapshotPanelVisible = false;
+    private List<GameObject> snapshotButtons = new List<GameObject>();
     
     private void Start()
     {
         if (wallPainter == null)
-            wallPainter = FindObjectOfType<WallPainter>();
+            wallPainter = Object.FindAnyObjectByType<WallPainter>();
         
         if (wallSegmentation == null)
-            wallSegmentation = FindObjectOfType<WallSegmentation>();
+            wallSegmentation = Object.FindAnyObjectByType<WallSegmentation>();
             
         // Инициализация UI элементов
         InitializeUI();
         
-        // По умолчанию скрываем палитру
+        // По умолчанию скрываем палитру и панель снимков
         colorPalette.SetActive(false);
+        
+        if (snapshotPanel != null)
+            snapshotPanel.SetActive(false);
+            
+        // Подписываемся на событие изменения списка снимков
+        if (wallPainter != null)
+        {
+            wallPainter.OnSnapshotsChanged += OnSnapshotsChanged;
+            
+            // Обновляем отображение снимков
+            UpdateSnapshotsList(wallPainter.GetSnapshots(), wallPainter.GetCurrentSnapshotIndex());
+        }
     }
     
     // Инициализация UI элементов
     private void InitializeUI()
     {
         // Настройка цветовых кнопок
-        for (int i = 0; i < colorButtons.Length && i < predefinedColors.Length; i++)
+        if (colorButtons != null && colorButtons.Length > 0)
         {
-            Color buttonColor = predefinedColors[i];
-            int colorIndex = i; // Для захвата в лямбда-выражении
-            
-            // Установка цвета кнопки
-            Image buttonImage = colorButtons[i].GetComponent<Image>();
-            if (buttonImage != null)
+            for (int i = 0; i < colorButtons.Length; i++)
             {
-                buttonImage.color = buttonColor;
+                if (colorButtons[i] != null)
+                {
+                    // Устанавливаем цвет кнопки из палитры
+                    int colorIndex = i % predefinedColors.Length;
+                    Color buttonColor = predefinedColors[colorIndex];
+                    
+                    // Устанавливаем цвет фона кнопки
+                    Image buttonImage = colorButtons[i].GetComponent<Image>();
+                    if (buttonImage != null)
+                    {
+                        buttonImage.color = buttonColor;
+                    }
+                    
+                    // Добавляем обработчик нажатия
+                    int capturedIndex = colorIndex; // Необходимо для замыкания
+                    colorButtons[i].onClick.AddListener(() => OnColorButtonClick(capturedIndex));
+                }
             }
-            
-            // Добавление обработчика события
-            colorButtons[i].onClick.AddListener(() => SetColor(colorIndex));
         }
         
         // Настройка слайдера размера кисти
         if (brushSizeSlider != null)
         {
+            brushSizeSlider.minValue = 0.05f;
+            brushSizeSlider.maxValue = 0.5f;
+            brushSizeSlider.value = 0.2f;
             brushSizeSlider.onValueChanged.AddListener(OnBrushSizeChanged);
-            
-            // Установка начального значения
-            wallPainter.SetBrushSize(brushSizeSlider.value);
         }
         
         // Настройка слайдера интенсивности
         if (intensitySlider != null)
         {
+            intensitySlider.minValue = 0f;
+            intensitySlider.maxValue = 1f;
+            intensitySlider.value = 0.8f;
             intensitySlider.onValueChanged.AddListener(OnIntensityChanged);
-            
-            // Установка начального значения
-            wallPainter.SetBrushIntensity(intensitySlider.value);
         }
         
         // Настройка кнопки сброса
         if (resetButton != null)
         {
-            resetButton.onClick.AddListener(OnResetButtonClicked);
+            resetButton.onClick.AddListener(OnResetButtonClick);
         }
         
         // Настройка кнопки переключения палитры
         if (togglePaletteButton != null)
         {
-            togglePaletteButton.onClick.AddListener(ToggleColorPalette);
+            togglePaletteButton.onClick.AddListener(OnTogglePaletteButtonClick);
         }
-    }
-    
-    // Установка цвета кисти
-    private void SetColor(int colorIndex)
-    {
-        if (colorIndex >= 0 && colorIndex < predefinedColors.Length)
-        {
-            wallPainter.SetColor(predefinedColors[colorIndex]);
-            
-            if (statusText != null)
-            {
-                statusText.text = "Цвет выбран";
-                StartCoroutine(ClearStatusAfterDelay(1.5f));
-            }
-        }
-    }
-    
-    // Обработчик изменения размера кисти
-    private void OnBrushSizeChanged(float value)
-    {
-        wallPainter.SetBrushSize(value);
-    }
-    
-    // Обработчик изменения интенсивности кисти
-    private void OnIntensityChanged(float value)
-    {
-        wallPainter.SetBrushIntensity(value);
-    }
-    
-    // Обработчик нажатия кнопки сброса
-    private void OnResetButtonClicked()
-    {
-        wallPainter.ResetPainting();
         
+        // Настройка кнопок снимков
+        if (createSnapshotButton != null)
+        {
+            createSnapshotButton.onClick.AddListener(OnCreateSnapshotButtonClick);
+        }
+        
+        if (toggleSnapshotPanelButton != null)
+        {
+            toggleSnapshotPanelButton.onClick.AddListener(OnToggleSnapshotPanelButtonClick);
+        }
+        
+        // Устанавливаем текст по умолчанию
         if (statusText != null)
         {
-            statusText.text = "Покраска сброшена";
-            StartCoroutine(ClearStatusAfterDelay(1.5f));
+            statusText.text = "Сканируйте окружение...";
         }
     }
     
-    // Переключение отображения палитры цветов
-    private void ToggleColorPalette()
-    {
-        isPaletteVisible = !isPaletteVisible;
-        colorPalette.SetActive(isPaletteVisible);
-    }
-    
-    // Очистка статусного текста через заданный промежуток времени
-    private IEnumerator ClearStatusAfterDelay(float delay)
-    {
-        yield return new WaitForSeconds(delay);
-        
-        if (statusText != null)
-        {
-            statusText.text = "";
-        }
-    }
-    
-    // Обновление информации о распознавании стен
+    // Обновление UI при обнаружении стен
     public void UpdateWallDetectionStatus(bool wallsDetected)
     {
         if (statusText != null)
         {
-            if (wallsDetected)
+            statusText.text = wallsDetected ? 
+                "Стены обнаружены. Начните покраску!" : 
+                "Сканируйте окружение, чтобы найти стены...";
+        }
+    }
+    
+    // Обработчики событий UI
+    
+    private void OnColorButtonClick(int colorIndex)
+    {
+        if (wallPainter != null)
+        {
+            wallPainter.SetColor(predefinedColors[colorIndex]);
+        }
+    }
+    
+    private void OnBrushSizeChanged(float size)
+    {
+        if (wallPainter != null)
+        {
+            wallPainter.SetBrushSize(size);
+        }
+    }
+    
+    private void OnIntensityChanged(float intensity)
+    {
+        if (wallPainter != null)
+        {
+            wallPainter.SetBrushIntensity(intensity);
+        }
+    }
+    
+    private void OnResetButtonClick()
+    {
+        if (wallPainter != null)
+        {
+            wallPainter.ResetPainting();
+        }
+    }
+    
+    private void OnTogglePaletteButtonClick()
+    {
+        isPaletteVisible = !isPaletteVisible;
+        
+        if (colorPalette != null)
+        {
+            colorPalette.SetActive(isPaletteVisible);
+        }
+    }
+    
+    // Снимки
+    private void OnCreateSnapshotButtonClick()
+    {
+        string snapshotName = "Вариант";
+        
+        if (snapshotNameInput != null && !string.IsNullOrEmpty(snapshotNameInput.text))
+        {
+            snapshotName = snapshotNameInput.text;
+        }
+        else
+        {
+            // Если имя не указано, добавляем номер
+            if (wallPainter != null)
             {
-                statusText.text = "Стены обнаружены";
-                statusText.color = Color.green;
+                var snapshots = wallPainter.GetSnapshots();
+                snapshotName += " " + (snapshots.Count + 1);
             }
-            else
+        }
+        
+        if (wallPainter != null)
+        {
+            wallPainter.CreateNewSnapshot(snapshotName);
+        }
+        
+        // Очищаем поле ввода
+        if (snapshotNameInput != null)
+        {
+            snapshotNameInput.text = "";
+        }
+    }
+    
+    private void OnToggleSnapshotPanelButtonClick()
+    {
+        isSnapshotPanelVisible = !isSnapshotPanelVisible;
+        
+        if (snapshotPanel != null)
+        {
+            snapshotPanel.SetActive(isSnapshotPanelVisible);
+        }
+    }
+    
+    // Обработчик события изменения списка снимков
+    private void OnSnapshotsChanged(List<PaintSnapshot> snapshots, int activeIndex)
+    {
+        UpdateSnapshotsList(snapshots, activeIndex);
+    }
+    
+    // Обновление UI списка снимков
+    private void UpdateSnapshotsList(List<PaintSnapshot> snapshots, int activeIndex)
+    {
+        if (snapshotContainer == null || snapshotButtonPrefab == null)
+            return;
+            
+        // Очищаем текущие кнопки
+        foreach (var button in snapshotButtons)
+        {
+            Destroy(button);
+        }
+        snapshotButtons.Clear();
+        
+        // Создаем кнопки для каждого снимка
+        for (int i = 0; i < snapshots.Count; i++)
+        {
+            GameObject buttonObj = Instantiate(snapshotButtonPrefab, snapshotContainer);
+            Button button = buttonObj.GetComponent<Button>();
+            
+            // Изменяем текст кнопки
+            TextMeshProUGUI buttonText = buttonObj.GetComponentInChildren<TextMeshProUGUI>();
+            if (buttonText != null)
             {
-                statusText.text = "Ищем стены...";
-                statusText.color = Color.yellow;
+                buttonText.text = snapshots[i].name;
             }
+            
+            // Особо выделяем активный снимок
+            Image buttonImage = buttonObj.GetComponent<Image>();
+            if (buttonImage != null && i == activeIndex)
+            {
+                buttonImage.color = new Color(0.2f, 0.5f, 0.3f);
+            }
+            
+            // Добавляем обработчик нажатия
+            int snapshotIndex = i; // Замыкание для правильного индекса
+            button.onClick.AddListener(() => OnSnapshotButtonClick(snapshotIndex));
+            
+            snapshotButtons.Add(buttonObj);
+        }
+    }
+    
+    // Обработчик нажатия на кнопку снимка
+    private void OnSnapshotButtonClick(int index)
+    {
+        if (wallPainter != null)
+        {
+            wallPainter.LoadSnapshot(index);
+        }
+    }
+    
+    // Очистка при уничтожении
+    private void OnDestroy()
+    {
+        if (wallPainter != null)
+        {
+            wallPainter.OnSnapshotsChanged -= OnSnapshotsChanged;
         }
     }
 } 

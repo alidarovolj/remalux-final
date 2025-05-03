@@ -28,10 +28,10 @@ public class DemoWallSegmentation : MonoBehaviour
     void Start()
     {
         if (planeManager == null)
-            planeManager = FindObjectOfType<ARPlaneManager>();
+            planeManager = Object.FindAnyObjectByType<ARPlaneManager>();
             
         if (cameraManager == null)
-            cameraManager = FindObjectOfType<ARCameraManager>();
+            cameraManager = Object.FindAnyObjectByType<ARCameraManager>();
             
         // Подписываемся на события изменения плоскостей
         planeManager.planesChanged += OnPlanesChanged;

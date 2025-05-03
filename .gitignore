@@ -71,5 +71,6 @@ crashlytics-build.properties
 /[Aa]ssets/[Ss]treamingAssets/aa.meta
 /[Aa]ssets/[Ss]treamingAssets/aa/*
 
-# Исключаем OpenCVForUnity как указано
-/[Aa]ssets/OpenCVForUnity/ 
+# Исключаем папку OpenCVForUnity
+/[Aa]ssets/[Ss]treamingAssets/OpenCVForUnity/
+/[Aa]ssets/[Ss]treamingAssets/OpenCVForUnity.meta 

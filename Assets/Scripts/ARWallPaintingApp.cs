@@ -2,12 +2,13 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.XR.ARFoundation;
+using Unity.XR.CoreUtils;
 
 public class ARWallPaintingApp : MonoBehaviour
 {
     [Header("AR Components")]
     [SerializeField] private ARSession arSession;
-    [SerializeField] private ARSessionOrigin arSessionOrigin;
+    [SerializeField] private XROrigin xrOrigin;
     [SerializeField] private ARPlaneManager planeManager;
     [SerializeField] private ARRaycastManager raycastManager;
     
@@ -35,25 +36,25 @@ public class ARWallPaintingApp : MonoBehaviour
     {
         // Получаем ссылки на компоненты, если они не назначены
         if (arSession == null)
-            arSession = FindObjectOfType<ARSession>();
+            arSession = Object.FindAnyObjectByType<ARSession>();
             
-        if (arSessionOrigin == null)
-            arSessionOrigin = FindObjectOfType<ARSessionOrigin>();
+        if (xrOrigin == null)
+            xrOrigin = Object.FindAnyObjectByType<XROrigin>();
             
         if (planeManager == null)
-            planeManager = FindObjectOfType<ARPlaneManager>();
+            planeManager = Object.FindAnyObjectByType<ARPlaneManager>();
             
         if (raycastManager == null)
-            raycastManager = FindObjectOfType<ARRaycastManager>();
+            raycastManager = Object.FindAnyObjectByType<ARRaycastManager>();
             
         if (wallSegmentation == null)
-            wallSegmentation = FindObjectOfType<WallSegmentation>();
+            wallSegmentation = Object.FindAnyObjectByType<WallSegmentation>();
             
         if (wallPainter == null)
-            wallPainter = FindObjectOfType<WallPainter>();
+            wallPainter = Object.FindAnyObjectByType<WallPainter>();
             
         if (uiManager == null)
-            uiManager = FindObjectOfType<UIManager>();
+            uiManager = Object.FindAnyObjectByType<UIManager>();
         
         // Настройка отображения плоскостей
         if (planeManager != null)
@@ -180,6 +181,14 @@ public class ARWallPaintingApp : MonoBehaviour
         foreach (var plane in planeManager.trackables)
         {
             plane.gameObject.SetActive(showPlaneVisualizers);
+        }
+    }
+    
+    private void OnDestroy()
+    {
+        if (planeManager != null)
+        {
+            planeManager.planesChanged -= OnPlanesChanged;
         }
     }
 } 

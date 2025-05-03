@@ -3,162 +3,142 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.RegularExpressions;
 using UnityEngine.XR.ARFoundation;
+using Unity.XR.CoreUtils;
 
 #if UNITY_EDITOR
 using UnityEditor;
-using UnityEngine.SceneManagement;
 using UnityEditor.SceneManagement;
+using UnityEngine.SceneManagement;
 
 /// <summary>
-/// Утилита для замены устаревших ссылок в скриптах
+/// Утилита для обновления ссылок и использования новых API AR Foundation
 /// </summary>
-public static class UpdateARReferences
+public class UpdateARReferences : MonoBehaviour
 {
-    [MenuItem("Tools/AR/Fix Script References")]
-    public static void FixScriptReferences()
+    [MenuItem("Tools/AR/Update References in Scene")]
+    public static void UpdateReferencesInScene()
     {
-        bool proceed = EditorUtility.DisplayDialog(
-            "Fix Script References",
-            "This will modify all C# scripts in the Assets folder to update references:\n\n" +
-            "• ARSessionOrigin → XROrigin\n" +
-            "• FindObjectOfType → FindAnyObjectByType\n" +
-            "• planesChanged → trackablesChanged\n\n" +
-            "Make sure you have a backup of your project before proceeding!",
-            "Update Scripts",
-            "Cancel"
+        // Просматриваем все объекты на сцене с компонентами, которые могут иметь ссылки на ARSessionOrigin
+        UpdateARWallPaintingAppReferences();
+        UpdateWallPainterReferences();
+        UpdateWallSegmentationReferences();
+        UpdateDemoWallSegmentationReferences();
+        
+        // Сохраняем сцену
+        Scene currentScene = EditorSceneManager.GetActiveScene();
+        EditorSceneManager.MarkSceneDirty(currentScene);
+        EditorSceneManager.SaveScene(currentScene);
+        
+        EditorUtility.DisplayDialog(
+            "Update Complete",
+            "References updated to use new AR Foundation APIs.",
+            "OK"
         );
-        
-        if (!proceed) return;
-        
-        try
-        {
-            EditorUtility.DisplayProgressBar("Updating Scripts", "Finding C# scripts...", 0.1f);
-            
-            // Получаем все CS файлы в Assets
-            string[] scriptPaths = Directory.GetFiles(Application.dataPath, "*.cs", SearchOption.AllDirectories);
-            int totalScripts = scriptPaths.Length;
-            int processedScripts = 0;
-            int modifiedScripts = 0;
-            
-            foreach (var scriptPath in scriptPaths)
-            {
-                processedScripts++;
-                float progress = (float)processedScripts / totalScripts;
-                EditorUtility.DisplayProgressBar("Updating Scripts", 
-                    $"Processing {Path.GetFileName(scriptPath)} ({processedScripts}/{totalScripts})", 
-                    progress);
-                
-                // Загружаем содержимое файла
-                string content = File.ReadAllText(scriptPath);
-                string originalContent = content;
-                
-                // Добавляем using для XROrigin
-                if (content.Contains("ARSessionOrigin") && !content.Contains("using Unity.XR.CoreUtils;"))
-                {
-                    content = AddUsingDirective(content, "using Unity.XR.CoreUtils;");
-                }
-                
-                // Заменяем ARSessionOrigin на XROrigin
-                content = ReplaceWithCaution(content, "ARSessionOrigin", "XROrigin");
-                
-                // Заменяем sessionOrigin.camera на sessionOrigin.Camera
-                content = ReplacePropertyCasing(content, ".camera", ".Camera");
-                
-                // Заменяем sessionOrigin.trackablesParent на sessionOrigin.TrackablesParent
-                content = ReplacePropertyCasing(content, ".trackablesParent", ".TrackablesParent");
-                
-                // Заменяем FindObjectOfType на FindAnyObjectByType
-                content = Regex.Replace(content, @"FindObjectOfType\s*<", "FindAnyObjectByType<");
-                
-                // Заменяем planesChanged на trackablesChanged
-                content = ReplacePropertyCasing(content, ".planesChanged", ".trackablesChanged");
-                
-                // Заменяем ARPlanesChangedEventArgs на ARTrackablesChangedEventArgs<ARPlane>
-                content = content.Replace("ARPlanesChangedEventArgs", "ARTrackablesChangedEventArgs<ARPlane>");
-                
-                // Заменяем методы обработки событий
-                content = content.Replace("PlaneManager_PlanesChanged", "PlaneManager_TrackedPlanesChanged");
-                
-                // Если были изменения, сохраняем файл
-                if (content != originalContent)
-                {
-                    File.WriteAllText(scriptPath, content);
-                    modifiedScripts++;
-                    Debug.Log($"Updated references in: {scriptPath}");
-                }
-            }
-            
-            EditorUtility.ClearProgressBar();
-            
-            AssetDatabase.Refresh();
-            
-            EditorUtility.DisplayDialog(
-                "Script Update Complete",
-                $"Processed {totalScripts} scripts and updated {modifiedScripts} files.\n\n" +
-                "Note: You may still need to manually fix some references.",
-                "OK"
-            );
-        }
-        catch (System.Exception ex)
-        {
-            EditorUtility.ClearProgressBar();
-            EditorUtility.DisplayDialog(
-                "Update Error",
-                "An error occurred during script update: " + ex.Message,
-                "OK"
-            );
-            Debug.LogException(ex);
-        }
     }
     
-    // Добавляет using директиву после других using-ов
-    private static string AddUsingDirective(string content, string directive)
+    [MenuItem("Tools/AR/Fix TrackablesChanged Subscriptions")]
+    public static void FixTrackablesChangedSubscriptions()
     {
-        // Проверяем не добавлена ли уже эта директива
-        if (content.Contains(directive))
-            return content;
+        // Поиск всех скриптов, которые могут подписываться на событие trackablesChanged
+        ARWallPaintingApp[] apps = Object.FindObjectsByType<ARWallPaintingApp>(FindObjectsSortMode.None);
+        DemoWallSegmentation[] demoSegmentations = Object.FindObjectsByType<DemoWallSegmentation>(FindObjectsSortMode.None);
         
-        // Находим позицию последней директивы using или начало файла
-        int lastUsingPos = -1;
-        
-        // Находим все строки с using
-        MatchCollection matches = Regex.Matches(content, @"using\s+[^;]+;");
-        if (matches.Count > 0)
+        // Обновляем скрипты, уведомляем пользователя о необходимости проверки кода
+        if (apps.Length > 0 || demoSegmentations.Length > 0)
         {
-            // Берем последний using
-            Match lastUsing = matches[matches.Count - 1];
-            lastUsingPos = lastUsing.Index + lastUsing.Length;
-        }
-        
-        if (lastUsingPos >= 0)
-        {
-            // Вставляем после последнего using
-            return content.Substring(0, lastUsingPos) + 
-                   "\n" + directive + 
-                   content.Substring(lastUsingPos);
+            EditorUtility.DisplayDialog(
+                "Manual Code Update Required",
+                $"Found {apps.Length} ARWallPaintingApp and {demoSegmentations.Length} DemoWallSegmentation scripts " +
+                "that might be subscribing to trackablesChanged. Code needs manual update to use planesChanged and ARPlanesChangedEventArgs.",
+                "OK"
+            );
         }
         else
         {
-            // Вставляем в начало файла
-            return directive + "\n" + content;
+            EditorUtility.DisplayDialog(
+                "No issues found",
+                "No objects found that might be subscribing to trackablesChanged.",
+                "OK"
+            );
         }
     }
     
-    // Заменяет с проверкой, что это не часть другого имени
-    private static string ReplaceWithCaution(string content, string oldText, string newText)
+    private static void UpdateARWallPaintingAppReferences()
     {
-        return Regex.Replace(content, 
-            $@"\b{Regex.Escape(oldText)}\b", 
-            newText);
+        ARWallPaintingApp[] apps = Object.FindObjectsByType<ARWallPaintingApp>(FindObjectsSortMode.None);
+        foreach (var app in apps)
+        {
+            SerializedObject so = new SerializedObject(app);
+            
+            // Проверяем, есть ли свойство arSessionOrigin
+            SerializedProperty arSessionOriginProp = so.FindProperty("arSessionOrigin");
+            SerializedProperty xrOriginProp = so.FindProperty("xrOrigin");
+            
+            if (arSessionOriginProp != null && xrOriginProp != null)
+            {
+                // Если есть ссылка на ARSessionOrigin, но нет на XROrigin
+                if (arSessionOriginProp.objectReferenceValue != null && xrOriginProp.objectReferenceValue == null)
+                {
+                    // Ищем XROrigin на сцене
+                    XROrigin xrOrigin = Object.FindFirstObjectByType<XROrigin>();
+                    if (xrOrigin != null)
+                    {
+                        xrOriginProp.objectReferenceValue = xrOrigin;
+                        Debug.Log($"Updated {app.name} to use XROrigin reference");
+                    }
+                }
+            }
+            
+            so.ApplyModifiedProperties();
+        }
     }
     
-    // Заменяет свойство с сохранением рег. выражения
-    private static string ReplacePropertyCasing(string content, string oldProperty, string newProperty)
+    private static void UpdateWallPainterReferences()
     {
-        // Заменяем с учетом возможных пробелов
-        return Regex.Replace(content, 
-            $@"{Regex.Escape(oldProperty)}\b", 
-            newProperty);
+        WallPainter[] painters = Object.FindObjectsByType<WallPainter>(FindObjectsSortMode.None);
+        foreach (var painter in painters)
+        {
+            SerializedObject so = new SerializedObject(painter);
+            
+            // Обновляем ссылки с sessionOrigin на xrOrigin
+            SerializedProperty sessionOriginProp = so.FindProperty("sessionOrigin");
+            SerializedProperty xrOriginProp = so.FindProperty("xrOrigin");
+            
+            if (sessionOriginProp != null && xrOriginProp != null)
+            {
+                if (sessionOriginProp.objectReferenceValue != null && xrOriginProp.objectReferenceValue == null)
+                {
+                    XROrigin xrOrigin = Object.FindFirstObjectByType<XROrigin>();
+                    if (xrOrigin != null)
+                    {
+                        xrOriginProp.objectReferenceValue = xrOrigin;
+                        Debug.Log($"Updated {painter.name} to use XROrigin reference");
+                    }
+                }
+            }
+            
+            so.ApplyModifiedProperties();
+        }
+    }
+    
+    private static void UpdateWallSegmentationReferences()
+    {
+        WallSegmentation[] segmentations = Object.FindObjectsByType<WallSegmentation>(FindObjectsSortMode.None);
+        foreach (var segmentation in segmentations)
+        {
+            SerializedObject so = new SerializedObject(segmentation);
+            so.ApplyModifiedProperties();
+        }
+    }
+    
+    private static void UpdateDemoWallSegmentationReferences()
+    {
+        DemoWallSegmentation[] demoSegmentations = Object.FindObjectsByType<DemoWallSegmentation>(FindObjectsSortMode.None);
+        foreach (var demo in demoSegmentations)
+        {
+            SerializedObject so = new SerializedObject(demo);
+            so.ApplyModifiedProperties();
+        }
     }
 }
 #endif 
