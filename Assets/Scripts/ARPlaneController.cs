@@ -110,8 +110,15 @@ public class ARPlaneController : MonoBehaviour
         yield return new WaitForSeconds(1.0f);
         
         // Обновляем сегментацию
-        wallSegmentation.UpdatePlanesSegmentationStatus();
-        Debug.Log("ARPlaneController: Запущено обновление статуса сегментации после обнаружения новых плоскостей");
+        if (wallSegmentation != null)
+        {
+            wallSegmentation.UpdatePlanesSegmentationStatus();
+            Debug.Log("ARPlaneController: Запущено обновление статуса сегментации после обнаружения новых плоскостей");
+        }
+        else
+        {
+            Debug.LogWarning("ARPlaneController: WallSegmentation компонент не найден, сегментация не выполнена");
+        }
     }
     
     /// <summary>

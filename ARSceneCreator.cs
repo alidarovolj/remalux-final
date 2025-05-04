@@ -30,13 +30,11 @@ public class ARSceneCreator : EditorWindow
         GetWindow<ARSceneCreator>("AR Wall Painting Setup");
     }
     
-    // Метод для создания новой AR Wall Painting сцены
-    // Просто вызываем пункт меню, который создает сцену
     [MenuItem("AR/Generate New ARWallPainting Scene", false, 11)]
     public static void GenerateARWallPaintingScene()
     {
-        // Вызываем меню, которое создает AR Wall Painting сцену
-        EditorApplication.ExecuteMenuItem("Tools/AR/Create AR Wall Painting Scene");
+        // Создаем новую сцену через ARWallPaintingSceneCreator
+        ARWallPaintingSceneCreator.CreateARWallPaintingScene();
     }
     
     // Отрисовка UI инструмента

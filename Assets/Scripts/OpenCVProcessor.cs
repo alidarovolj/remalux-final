@@ -268,4 +268,30 @@ public class OpenCVProcessor : MonoBehaviour
         
         return ProcessSegmentationMask(segmentationMask);
     }
+    
+    /// <summary>
+    /// Проверяет доступность OpenCV и возвращает результат как булевое значение
+    /// </summary>
+    public bool IsOpenCVAvailable()
+    {
+#if OPENCV_ENABLED
+        try
+        {
+            // Простая проверка OpenCV, создаем и уничтожаем тестовый Mat
+            using (Mat testMat = new Mat(10, 10, CvType.CV_8UC3))
+            {
+                // Если мы дошли сюда без исключений, значит OpenCV работает
+                return true;
+            }
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogError($"Ошибка при проверке OpenCV: {ex.Message}");
+            return false;
+        }
+#else
+        Debug.LogWarning("OpenCV не включен. Добавьте символ OPENCV_ENABLED в Scripting Define Symbols.");
+        return false;
+#endif
+    }
 } 
