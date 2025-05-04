@@ -240,11 +240,20 @@ public class ARPlaneVisualizer : MonoBehaviour
     }
     
     /// <summary>
-    /// Устанавливает, является ли эта плоскость плоскостью сегментации
+    /// Устанавливает флаг, является ли плоскость частью сегментации стен
     /// </summary>
-    public void SetAsSegmentationPlane(bool isSegmentation)
+    /// <param name="segmentationPlane">True - плоскость сегментации, False - обычная плоскость</param>
+    public void SetAsSegmentationPlane(bool segmentationPlane)
     {
-        isSegmentationPlane = isSegmentation;
+        isSegmentationPlane = segmentationPlane;
         UpdateVisual();
+    }
+    
+    /// <summary>
+    /// Возвращает текущее значение флага сегментации
+    /// </summary>
+    public bool IsSegmentationPlane()
+    {
+        return isSegmentationPlane;
     }
 } 

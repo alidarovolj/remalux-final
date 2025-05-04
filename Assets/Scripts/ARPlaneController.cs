@@ -77,15 +77,38 @@ public class ARPlaneController : MonoBehaviour
         // Получаем компонент визуализации
         ARPlaneVisualizer visualizer = plane.GetComponentInChildren<ARPlaneVisualizer>();
         
-        // Если это не плоскость сегментации, скрываем ее
+        // Если визуализатор найден, настраиваем его
         if (visualizer != null)
         {
+            // Вместо отключения MeshRenderer используем флаг isSegmentationPlane
             // По умолчанию все плоскости НЕ являются плоскостями сегментации
-            // Такой флаг устанавливается только для плоскостей, созданных через WallSegmentation
-            MeshRenderer meshRenderer = visualizer.GetComponent<MeshRenderer>();
-            if (meshRenderer != null)
+            visualizer.SetAsSegmentationPlane(false);
+            
+            if (enableDebugLogs)
             {
-                meshRenderer.enabled = false;
+                Debug.Log($"ARPlaneController: Плоскость {plane.trackableId} обработана, установлен isSegmentationPlane=false");
+            }
+        }
+        else
+        {
+            // Если визуализатор не найден, создаем его
+            GameObject visualizerObj = new GameObject("ARPlaneVisualizer");
+            visualizerObj.transform.SetParent(plane.transform);
+            visualizerObj.transform.localPosition = Vector3.zero;
+            visualizerObj.transform.localRotation = Quaternion.identity;
+            visualizerObj.transform.localScale = Vector3.one;
+            
+            // Добавляем необходимые компоненты
+            MeshFilter meshFilter = visualizerObj.AddComponent<MeshFilter>();
+            MeshRenderer meshRenderer = visualizerObj.AddComponent<MeshRenderer>();
+            visualizer = visualizerObj.AddComponent<ARPlaneVisualizer>();
+            
+            // Устанавливаем флаг
+            visualizer.SetAsSegmentationPlane(false);
+            
+            if (enableDebugLogs)
+            {
+                Debug.Log($"ARPlaneController: Создан новый визуализатор для плоскости {plane.trackableId}");
             }
         }
     }
@@ -97,14 +120,17 @@ public class ARPlaneController : MonoBehaviour
     {
         if (planeManager == null) return;
         
+        int processedCount = 0;
+        
         foreach (var plane in planeManager.trackables)
         {
             ProcessPlane(plane);
+            processedCount++;
         }
         
         if (enableDebugLogs)
         {
-            Debug.Log("ARPlaneController: Скрыты стандартные AR плоскости");
+            Debug.Log($"ARPlaneController: Обработано {processedCount} AR плоскостей");
         }
     }
     
@@ -203,6 +229,63 @@ public class ARPlaneController : MonoBehaviour
         if (enableDebugLogs)
         {
             Debug.Log("ARPlaneController: Переключен режим расширения стен для всех визуализаторов");
+        }
+    }
+    
+    /// <summary>
+    /// Устанавливает флаг сегментации для всех AR плоскостей
+    /// </summary>
+    /// <param name="isSegmentationPlane">True - плоскости сегментации, False - обычные плоскости</param>
+    public void SetSegmentationFlagForAllPlanes(bool isSegmentationPlane)
+    {
+        if (planeManager == null)
+        {
+            Debug.LogWarning("ARPlaneController: planeManager не назначен");
+            return;
+        }
+        
+        int updatedCount = 0;
+        
+        foreach (var plane in planeManager.trackables)
+        {
+            ARPlaneVisualizer[] visualizers = plane.GetComponentsInChildren<ARPlaneVisualizer>();
+            
+            foreach (var visualizer in visualizers)
+            {
+                visualizer.SetAsSegmentationPlane(isSegmentationPlane);
+                updatedCount++;
+            }
+        }
+        
+        if (enableDebugLogs)
+        {
+            Debug.Log($"ARPlaneController: Установлен флаг isSegmentationPlane={isSegmentationPlane} для {updatedCount} визуализаторов");
+        }
+    }
+    
+    /// <summary>
+    /// Устанавливает флаг сегментации для определенной AR плоскости
+    /// </summary>
+    /// <param name="plane">AR плоскость</param>
+    /// <param name="isSegmentationPlane">True - плоскость сегментации, False - обычная плоскость</param>
+    public void SetSegmentationFlagForPlane(ARPlane plane, bool isSegmentationPlane)
+    {
+        if (plane == null)
+        {
+            Debug.LogWarning("ARPlaneController: plane не может быть null");
+            return;
+        }
+        
+        ARPlaneVisualizer[] visualizers = plane.GetComponentsInChildren<ARPlaneVisualizer>();
+        
+        foreach (var visualizer in visualizers)
+        {
+            visualizer.SetAsSegmentationPlane(isSegmentationPlane);
+        }
+        
+        if (enableDebugLogs)
+        {
+            Debug.Log($"ARPlaneController: Установлен флаг isSegmentationPlane={isSegmentationPlane} для плоскости {plane.trackableId}");
         }
     }
 } 

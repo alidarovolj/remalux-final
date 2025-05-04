@@ -53,18 +53,18 @@ public class WallSegmentation : MonoBehaviour
     
     [Header("Segmentation Mode")]
     [SerializeField] private SegmentationMode currentMode = SegmentationMode.ExternalModel;
-    [SerializeField] private string externalModelPath = "BiseNet.onnx"; // Изменено на новую модель BiseNet
+    [SerializeField] private string externalModelPath = "Models/model.onnx"; // Изменено на новую модель SegFormer
     
     [Header("Barracuda Model")]
     [SerializeField] private NNModel embeddedModelAsset; // Модель, привязанная в Unity
-    [SerializeField] private string inputName = "input"; // Обновлено под BiseNet
-    [SerializeField] private string outputName = "output"; // Обновлено под BiseNet
+    [SerializeField] private string inputName = "input"; // Для SegFormer
+    [SerializeField] private string outputName = "logits"; // Для SegFormer
     
     [Header("Segmentation Parameters")]
-    [SerializeField] private int inputWidth = 960; // Обновлено под размер входа BiseNet
-    [SerializeField] private int inputHeight = 720; // Обновлено под размер входа BiseNet
+    [SerializeField] private int inputWidth = 512; // Обновлено под размер входа SegFormer
+    [SerializeField] private int inputHeight = 512; // Обновлено под размер входа SegFormer
     [SerializeField] private float threshold = 0.5f;
-    [SerializeField] private int wallClassIndex = 12; // Обновлено на класс "wall" в наборе Cityscapes
+    [SerializeField] private int wallClassIndex = 1; // Обновлено на класс "wall" в наборе ADE20K (индекс 1)
     
     [Header("Debug & Performance")]
     [SerializeField] private bool forceDemoMode = false; // Принудительно использовать демо-режим вместо ML
@@ -195,10 +195,38 @@ public class WallSegmentation : MonoBehaviour
                 useDemoMode = true;
             }
         }
-        // Загружаем внешнюю модель из StreamingAssets
+        // Загружаем внешнюю модель из StreamingAssets или Assets/Models
         else if (currentMode == SegmentationMode.ExternalModel)
         {
-            string fullPath = Path.Combine(Application.streamingAssetsPath, externalModelPath);
+            string streamingAssetsPath = Path.Combine(Application.streamingAssetsPath, externalModelPath);
+            string assetsPath = Path.Combine(Application.dataPath, externalModelPath);
+            string fullPath = "";
+            
+            // Проверяем, существует ли файл в StreamingAssets
+            if (File.Exists(streamingAssetsPath))
+            {
+                fullPath = streamingAssetsPath;
+                Debug.Log($"Модель найдена в StreamingAssets: {fullPath}");
+            }
+            // Затем проверяем в директории Assets
+            else if (File.Exists(assetsPath))
+            {
+                fullPath = assetsPath;
+                Debug.Log($"Модель найдена в Assets: {fullPath}");
+            }
+            // Если файл не найден, но указан относительный путь, ищем в корне проекта
+            else if (File.Exists(externalModelPath))
+            {
+                fullPath = externalModelPath;
+                Debug.Log($"Модель найдена по относительному пути: {fullPath}");
+            }
+            else
+            {
+                Debug.LogWarning($"ONNX модель не найдена по путям: {streamingAssetsPath}, {assetsPath}, {externalModelPath}");
+                Debug.LogWarning($"Переключаемся в демо-режим.");
+                useDemoMode = true;
+                return;
+            }
             
             // Используем метод ImportONNXModel для импорта модели
             bool success = ImportONNXModel(fullPath);
@@ -406,235 +434,81 @@ public class WallSegmentation : MonoBehaviour
             
             // Очищаем временную текстуру результата
             Destroy(result);
+            
+            // Обновляем статус всех плоскостей на основе результатов сегментации
+            UpdatePlanesSegmentationStatus();
+
+            // Выводим отладочную информацию о количестве обнаруженных стен
+            Debug.Log($"Сегментация завершена, обрабатываем плоскости для определения стен...");
         }
         
         yield return null;
         isProcessing = false;
     }
     
-    // Выполнение сегментации с помощью Barracuda или демо-режима
-    private Texture2D RunSegmentation(Texture2D inputTexture)
+    /// <summary>
+    /// Запускает сегментацию изображения
+    /// </summary>
+    /// <param name="cameraTexture">Текстура с камеры</param>
+    /// <returns>Обработанная текстура с сегментацией</returns>
+    private Texture2D RunSegmentation(Texture2D cameraTexture)
     {
-        // Если демо-режим принудительно включен или установлен из-за ошибок
-        if (forceDemoMode || useDemoMode || currentMode == SegmentationMode.Demo)
+        if (cameraTexture == null)
         {
-            return GenerateDemoSegmentation(inputTexture);
+            return null;
         }
         
-        // Проверка модели
-        if ((currentMode == SegmentationMode.EmbeddedModel && currentModelAsset == null) || 
-            (currentMode == SegmentationMode.ExternalModel && model == null))
-        {
-            Debug.LogError("Модель ONNX не загружена или имеет неправильный формат");
-            useDemoMode = true;
-            return GenerateDemoSegmentation(inputTexture);
-        }
-        
-        if (worker == null)
-        {
-            try
-            {
-                InitializeModel();
-            }
-            catch (System.Exception e)
-            {
-                Debug.LogError($"Ошибка при создании Barracuda worker: {e.Message}");
-                useDemoMode = true;
-                return GenerateDemoSegmentation(inputTexture);
-            }
-        }
-        
-        // Подготавливаем входное изображение к размеру, требуемому BiseNet (960x720)
-        Texture2D resizedTexture = new Texture2D(inputWidth, inputHeight, TextureFormat.RGB24, false);
-        
-        // Создаем временный RenderTexture для масштабирования
-        RenderTexture rt = RenderTexture.GetTemporary(inputWidth, inputHeight, 24);
-        Graphics.Blit(inputTexture, rt);
-        
-        // Сохраняем текущий RenderTexture
-        RenderTexture activeRT = RenderTexture.active;
-        RenderTexture.active = rt;
-        
-        // Копируем содержимое в новую текстуру
-        resizedTexture.ReadPixels(new Rect(0, 0, inputWidth, inputHeight), 0, 0);
-        resizedTexture.Apply();
-        
-        // Восстанавливаем активный RenderTexture
-        RenderTexture.active = activeRT;
-        RenderTexture.ReleaseTemporary(rt);
-        
-        // Создаем входной тензор - BiseNet ожидает формат [1,3,720,960]
         try
         {
-            // Освобождаем предыдущий тензор, если он существует
-            if (inputTensor != null)
+            Texture2D segmentationResult = null;
+            
+            switch (currentMode)
             {
-                inputTensor.Dispose();
-                inputTensor = null;
+                case SegmentationMode.Demo:
+                    // Демонстрационный режим без использования нейросети
+                    segmentationResult = RunDemoSegmentation();
+                    break;
+                
+                case SegmentationMode.EmbeddedModel:
+                    // Используем встроенную модель
+                    segmentationResult = RunModelSegmentation(cameraTexture);
+                    break;
+                
+                case SegmentationMode.ExternalModel:
+                    // Используем внешнюю модель
+                    segmentationResult = RunExternalModelSegmentation(cameraTexture);
+                    break;
+                
+                default:
+                    // По умолчанию запускаем демо
+                    segmentationResult = RunDemoSegmentation();
+                    break;
             }
             
-            // Создаем тензор в формате NCHW (batch, channels, height, width)
-            inputTensor = new Tensor(resizedTexture, channels: 3);
-            
-            Debug.Log($"Создан входной тензор для BiseNet: {inputTensor.shape}");
-            
-            Tensor outputTensor = null;
-            try
+            // Применяем OpenCV для улучшения качества сегментации
+            OpenCVProcessor openCVProcessor = GetComponent<OpenCVProcessor>();
+            if (openCVProcessor != null && segmentationResult != null)
             {
-                // Запускаем инференс модели
-                worker.Execute(inputTensor);
-                
-                // Проверяем, существует ли указанный выходной тензор
-                if (string.IsNullOrEmpty(outputName))
+                Texture2D enhancedMask = openCVProcessor.EnhanceSegmentationMask(segmentationResult);
+                if (enhancedMask != null)
                 {
-                    // Берем первый доступный выходной тензор, если имя не задано
-                    if (model.outputs.Count > 0)
-                    {
-                        outputName = model.outputs[0];
-                        Debug.Log($"Используем первый доступный выходной тензор: {outputName}");
-                    }
-                    else
-                    {
-                        Debug.LogError("Модель не имеет выходных тензоров");
-                        useDemoMode = true;
-                        return GenerateDemoSegmentation(inputTexture);
-                    }
+                    return enhancedMask;
                 }
-                
-                try
-                {
-                    var output = worker.PeekOutput(outputName);
-                    Debug.Log($"Получен выходной тензор: {output.shape}");
-                
-                    // Создаем результирующую текстуру для сегментированного изображения
-                    Texture2D resultTexture = new Texture2D(inputWidth, inputHeight, TextureFormat.RGBA32, false);
-                
-                    // Интерпретируем результат для BiseNet (маска классов)
-                    int numClasses = output.shape[1]; // Количество классов в выходном слое
-                
-                    // Обрабатываем результат сегментации
-                    for (int y = 0; y < inputHeight; y++)
-                    {
-                        for (int x = 0; x < inputWidth; x++)
-                        {
-                            // Находим класс с максимальной вероятностью в данной точке
-                            float maxVal = float.MinValue;
-                            int bestClass = 0;
-                        
-                            for (int c = 0; c < numClasses; c++)
-                            {
-                                // BiseNet возвращает scores для каждого класса в данной точке
-                                float value = output[0, c, y, x];
-                                if (value > maxVal)
-                                {
-                                    maxVal = value;
-                                    bestClass = c;
-                                }
-                            }
-                        
-                            // Цветовая схема для классов Cityscapes
-                            Color pixelColor = Color.black;
-                        
-                            // Если этот пиксель распознан как стена (wallClassIndex)
-                            if (bestClass == wallClassIndex)
-                            {
-                                pixelColor = new Color(0.2f, 0.5f, 0.9f, 0.8f); // Синий для стен
-                            }
-                            else
-                            {
-                                // Разные цвета для других классов для отладки
-                                float hue = (float)bestClass / numClasses;
-                                pixelColor = Color.HSVToRGB(hue, 0.7f, 0.3f);
-                                pixelColor.a = 0.3f; // Полупрозрачный для не-стен
-                            }
-                        
-                            resultTexture.SetPixel(x, y, pixelColor);
-                        }
-                    }
-                
-                    resultTexture.Apply();
-                
-                    // Очищаем ресурсы
-                    Destroy(resizedTexture);
-                
-                    Debug.Log("BiseNet сегментация успешно выполнена");
-                    return resultTexture;
+            }
+            
+            return segmentationResult;
                 }
                 catch (System.Exception e)
                 {
-                    Debug.LogError($"Ошибка при доступе к тензору {outputName}: {e.Message}");
-                    
-                    // Пробуем найти доступные выходные тензоры
-                    Debug.Log("Доступные выходы модели:");
-                    // Вместо worker.GetOutputs() используем model.outputs
-                    if (model != null && model.outputs != null)
-                    {
-                        foreach (var output in model.outputs)
-                        {
-                            Debug.Log($"- {output}");
-                        }
-                    }
-                    else
-                    {
-                        Debug.LogError("Не удалось получить список выходных тензоров модели");
-                    }
-                    
-                    errorCount++;
-                    // Если превышено количество ошибок, переключаемся на демо-режим
-                    if (errorCount > 3)
-                    {
-                        Debug.LogWarning("Превышено количество ошибок сегментации. Переключение в демо-режим.");
-                        useDemoMode = true;
-                    }
-                }
-            }
-            catch (System.Exception e)
-            {
-                Debug.LogError($"Ошибка при выполнении инференса: {e.Message}");
-                errorCount++;
-                
-                // Если превышено количество ошибок, переключаемся на демо-режим
-                if (errorCount > 3)
-                {
-                    Debug.LogWarning("Превышено количество ошибок сегментации. Переключение в демо-режим.");
-                    useDemoMode = true;
-                }
-            }
-            finally
-            {
-                if (outputTensor != null)
-                {
-                    outputTensor.Dispose();
-                }
-            }
+            Debug.LogError($"Ошибка при сегментации: {e.Message}\n{e.StackTrace}");
+            return null;
         }
-        catch (System.Exception e)
-        {
-            Debug.LogError($"Ошибка при подготовке тензоров: {e.Message}");
-            errorCount++;
-            
-            // Если превышено количество ошибок, переключаемся на демо-режим
-            if (errorCount > 3)
-            {
-                Debug.LogWarning("Превышено количество ошибок сегментации. Переключение в демо-режим.");
-                useDemoMode = true;
-            }
-        }
-        finally
-        {
-            if (inputTensor != null)
-            {
-                inputTensor.Dispose();
-                inputTensor = null;
-            }
-        }
-        
-        // В случае ошибки возвращаем демо-сегментацию
-        return GenerateDemoSegmentation(inputTexture);
     }
     
-    // Генерация демонстрационной сегментации без использования ML
-    private Texture2D GenerateDemoSegmentation(Texture2D source)
+    /// <summary>
+    /// Запускает демо-сегментацию без использования нейросети
+    /// </summary>
+    private Texture2D RunDemoSegmentation()
     {
         // Создаем текстуру соответствующего размера
         Texture2D demoTexture = new Texture2D(inputWidth, inputHeight, TextureFormat.RGBA32, false);
@@ -759,87 +633,215 @@ public class WallSegmentation : MonoBehaviour
         demoWalls.Add(wallObj);
     }
     
-    // Обновляем метод OnDisable для надежного освобождения тензоров
-    private void OnDisable()
+    /// <summary>
+    /// Запускает сегментацию с помощью встроенной модели
+    /// </summary>
+    private Texture2D RunModelSegmentation(Texture2D inputTexture)
     {
-        // Освобождаем ресурсы Barracuda
+        if (worker == null || (currentModelAsset == null && model == null))
+        {
+            Debug.LogError("Модель ONNX не загружена или имеет неправильный формат");
+            return RunDemoSegmentation();
+        }
+        
+        try
+        {
+            // Подготавливаем входное изображение к размеру, требуемому BiseNet (960x720)
+            Texture2D resizedTexture = new Texture2D(inputWidth, inputHeight, TextureFormat.RGB24, false);
+            
+            // Создаем временный RenderTexture для масштабирования
+            RenderTexture rt = RenderTexture.GetTemporary(inputWidth, inputHeight, 24);
+            Graphics.Blit(inputTexture, rt);
+            
+            // Сохраняем текущий RenderTexture
+            RenderTexture activeRT = RenderTexture.active;
+            RenderTexture.active = rt;
+            
+            // Копируем содержимое в новую текстуру
+            resizedTexture.ReadPixels(new Rect(0, 0, inputWidth, inputHeight), 0, 0);
+            resizedTexture.Apply();
+            
+            // Восстанавливаем активный RenderTexture
+            RenderTexture.active = activeRT;
+            RenderTexture.ReleaseTemporary(rt);
+            
+            // Освобождаем предыдущий тензор, если он существует
         if (inputTensor != null)
         {
             inputTensor.Dispose();
             inputTensor = null;
         }
         
-        if (worker != null)
+            // Создаем тензор в формате NCHW (batch, channels, height, width)
+            inputTensor = new Tensor(resizedTexture, channels: 3);
+            
+            Debug.Log($"Создан входной тензор для модели: {inputTensor.shape}");
+            
+            // Запускаем инференс модели
+            worker.Execute(inputTensor);
+            
+            // Проверяем, существует ли указанный выходной тензор
+            if (string.IsNullOrEmpty(outputName))
+            {
+                // Берем первый доступный выходной тензор, если имя не задано
+                if (model.outputs.Count > 0)
+                {
+                    outputName = model.outputs[0];
+                    Debug.Log($"Используем первый доступный выходной тензор: {outputName}");
+                }
+                else
+                {
+                    Debug.LogError("Модель не имеет выходных тензоров");
+                    return RunDemoSegmentation();
+                }
+            }
+            
+            // Получаем результат
+            Tensor output = worker.PeekOutput(outputName);
+            Debug.Log($"Получен выходной тензор: {output.shape} (batch={output.shape[0]}, channels={output.shape[1]}, height={output.shape[2]}, width={output.shape[3]})");
+            
+            // Дополнительная отладка: вывод значений для стены
+            if (output.shape[1] > wallClassIndex)
+            {
+                float minVal = float.MaxValue;
+                float maxVal = float.MinValue;
+                float avgVal = 0;
+                int count = 0;
+                
+                // Анализ значений для класса стены
+                for (int y = 0; y < output.shape[2]; y++)
+                {
+                    for (int x = 0; x < output.shape[3]; x++)
+                    {
+                        float val = output[0, wallClassIndex, y, x];
+                        minVal = Mathf.Min(minVal, val);
+                        maxVal = Mathf.Max(maxVal, val);
+                        avgVal += val;
+                        count++;
+                    }
+                }
+                
+                if (count > 0)
+                {
+                    avgVal /= count;
+                    Debug.Log($"Анализ значений для класса стены: мин={minVal}, макс={maxVal}, среднее={avgVal}");
+                }
+            }
+            
+            // Создаем результирующую текстуру для сегментированного изображения
+            Texture2D resultTexture = new Texture2D(inputWidth, inputHeight, TextureFormat.RGBA32, false);
+            
+            // Интерпретируем результат сегментации
+            for (int y = 0; y < output.shape[2]; y++)
+            {
+                for (int x = 0; x < output.shape[3]; x++)
+                {
+                    // Для SegFormer обрабатываем только класс стены (индекс wallClassIndex)
+                    float wallProb = output[0, wallClassIndex, y, x];
+                    
+                    // Определяем цвет пикселя на основе вероятности
+                    Color pixelColor = Color.clear; // Прозрачный по умолчанию
+                    
+                    // Если вероятность стены выше порога
+                    if (wallProb > threshold)
+                    {
+                        pixelColor = new Color(0.2f, 0.5f, 0.9f, 0.8f); // Синий для стен
+                    }
+                    
+                    // Масштабируем координаты, так как выходная маска 128x128, а нам нужно 512x512
+                    int destX = (x * inputWidth) / output.shape[3];
+                    int destY = (y * inputHeight) / output.shape[2];
+                    
+                    // Определяем размер блока для масштабирования
+                    int blockWidth = inputWidth / output.shape[3];
+                    int blockHeight = inputHeight / output.shape[2];
+                    
+                    // Устанавливаем цвет для блока пикселей
+                    for (int oy = 0; oy < blockHeight && (destY + oy) < inputHeight; oy++)
+                    {
+                        for (int ox = 0; ox < blockWidth && (destX + ox) < inputWidth; ox++)
+                        {
+                            resultTexture.SetPixel(destX + ox, destY + oy, pixelColor);
+                        }
+                    }
+                }
+            }
+            
+            resultTexture.Apply();
+            
+            // Очищаем ресурсы
+            Destroy(resizedTexture);
+            output.Dispose();
+            
+            Debug.Log("Сегментация успешно выполнена");
+            return resultTexture;
+        }
+        catch (System.Exception e)
         {
-            worker.Dispose();
-            worker = null;
+            Debug.LogError($"Ошибка при сегментации изображения: {e.Message}\n{e.StackTrace}");
+            return RunDemoSegmentation();
+        }
+        finally
+        {
+        if (inputTensor != null)
+        {
+            inputTensor.Dispose();
+            inputTensor = null;
+            }
         }
     }
     
-    // Добавляем метод OnApplicationQuit для освобождения ресурсов
-    private void OnApplicationQuit()
+    /// <summary>
+    /// Запускает сегментацию с помощью внешней модели
+    /// </summary>
+    private Texture2D RunExternalModelSegmentation(Texture2D inputTexture)
     {
-        // Дублируем освобождение ресурсов для предотвращения утечек
-        if (inputTensor != null)
-        {
-            inputTensor.Dispose();
-            inputTensor = null;
-        }
-        
-        if (worker != null)
-        {
-            worker.Dispose();
-            worker = null;
-        }
-        
-        // Очищаем текстуры
-        if (segmentationTexture != null)
-        {
-            Destroy(segmentationTexture);
-            segmentationTexture = null;
-        }
-        
-        if (cameraTexture != null)
-        {
-            Destroy(cameraTexture);
-            cameraTexture = null;
-        }
+        // Для внешней модели используем тот же метод, что и для встроенной
+        return RunModelSegmentation(inputTexture);
     }
 
-    // Освобождение ресурсов
-    private void OnDestroy()
+    /// <summary>
+    /// Создает меш для стены
+    /// </summary>
+    private Mesh CreateWallMesh(float width, float height)
     {
-        // Отписываемся от событий
-        if (cameraManager != null)
-        {
-            cameraManager.frameReceived -= OnCameraFrameReceived;
-        }
+        Mesh mesh = new Mesh();
         
-        // Освобождаем ресурсы Barracuda при уничтожении объекта
-        if (inputTensor != null)
+        // Создаем вершины (простой прямоугольник)
+        Vector3[] vertices = new Vector3[4]
         {
-            inputTensor.Dispose();
-            inputTensor = null;
-        }
+            new Vector3(-width/2, -height/2, 0),
+            new Vector3(width/2, -height/2, 0),
+            new Vector3(width/2, height/2, 0),
+            new Vector3(-width/2, height/2, 0)
+        };
         
-        if (worker != null)
+        // УФ-координаты
+        Vector2[] uv = new Vector2[4]
         {
-            worker.Dispose();
-            worker = null;
-        }
+            new Vector2(0, 0),
+            new Vector2(1, 0),
+            new Vector2(1, 1),
+            new Vector2(0, 1)
+        };
         
-        // Освобождаем объекты Unity
-        if (segmentationTexture != null)
+        // Треугольники
+        int[] triangles = new int[6]
         {
-            Destroy(segmentationTexture);
-            segmentationTexture = null;
-        }
+            0, 1, 2,
+            2, 3, 0
+        };
         
-        if (cameraTexture != null)
-        {
-            Destroy(cameraTexture);
-            cameraTexture = null;
-        }
+        // Установка данных в меш
+        mesh.vertices = vertices;
+        mesh.uv = uv;
+        mesh.triangles = triangles;
+        
+        // Пересчитываем нормали и границы
+        mesh.RecalculateNormals();
+        mesh.RecalculateBounds();
+        
+        return mesh;
     }
 
     // Переключение режима сегментации
@@ -929,7 +931,7 @@ public class WallSegmentation : MonoBehaviour
     }
 
     // Привязка маски сегментации к AR плоскостям
-    public bool IsPlaneInSegmentationMask(ARPlane plane, float minCoverage = 0.5f)
+    public bool IsPlaneInSegmentationMask(ARPlane plane, float minCoverage = 0.3f)
     {
         if (segmentationTexture == null || plane == null)
             return false;
@@ -949,6 +951,9 @@ public class WallSegmentation : MonoBehaviour
         // Счетчики для определения покрытия
         int totalVertices = 0;
         int maskedVertices = 0;
+        
+        // Используем более низкий порог для SegFormer
+        float wallThreshold = 0.2f;
         
         // Перебираем все вершины меша
         for (int i = 0; i < vertices.Length; i++)
@@ -972,9 +977,8 @@ public class WallSegmentation : MonoBehaviour
                 // Получаем цвет пикселя и проверяем, относится ли он к классу стены
                 Color pixelColor = segmentationTexture.GetPixel(texX, texY);
                 
-                // В зависимости от типа маски можем проверять разные условия
-                // Для бинарной маски: белый цвет (или высокое значение канала) = стена
-                if (pixelColor.r > threshold || pixelColor.g > threshold || pixelColor.b > threshold)
+                // Для модели SegFormer проверяем только синий канал (наша маркировка стен)
+                if (pixelColor.b > wallThreshold)
                 {
                     maskedVertices++;
                 }
@@ -1015,6 +1019,9 @@ public class WallSegmentation : MonoBehaviour
         int totalVertices = 0;
         int maskedVertices = 0;
         
+        // Используем более низкий порог для SegFormer
+        float wallThreshold = 0.2f;
+        
         // Перебираем все вершины меша
         for (int i = 0; i < vertices.Length; i++)
         {
@@ -1037,8 +1044,8 @@ public class WallSegmentation : MonoBehaviour
                 // Получаем цвет пикселя и проверяем, относится ли он к классу стены
                 Color pixelColor = segmentationTexture.GetPixel(texX, texY);
                 
-                // В зависимости от типа маски можем проверять разные условия
-                if (pixelColor.r > threshold || pixelColor.g > threshold || pixelColor.b > threshold)
+                // Для модели SegFormer проверяем только синий канал (наша маркировка стен)
+                if (pixelColor.b > wallThreshold)
                 {
                     maskedVertices++;
                 }
@@ -1081,121 +1088,49 @@ public class WallSegmentation : MonoBehaviour
     }
 
     /// <summary>
-    /// Создает визуализацию обнаруженных стен
+    /// Обновляет статус всех AR плоскостей на основе результатов сегментации
     /// </summary>
-    /// <param name="prediction">Информация о сегментации</param>
-    private void CreateVisualization(WallPrediction prediction)
+    public void UpdatePlanesSegmentationStatus()
     {
-        if (prediction == null || prediction.walls == null || prediction.walls.Count == 0)
+        // Получаем ссылку на ARPlaneManager
+        ARPlaneManager planeManager = FindObjectOfType<ARPlaneManager>();
+        if (planeManager == null)
         {
-            Debug.LogWarning("Нет стен для визуализации");
+            Debug.LogWarning("WallSegmentation: ARPlaneManager не найден в сцене");
             return;
         }
         
-        // Очищаем предыдущие стены, если они есть
-        ClearCurrentWalls();
+        // Получаем ссылку на ARPlaneController
+        ARPlaneController planeController = FindObjectOfType<ARPlaneController>();
         
-        // Создаем новые объекты для каждой стены
-        foreach (var wallData in prediction.walls)
-        {
-            // Создаем GameObject для стены
-            GameObject wallObj = new GameObject($"SegmentedWall_{wallData.id}");
-            
-            // Устанавливаем родителя
-            wallObj.transform.SetParent(transform);
-            
-            // Устанавливаем позицию и поворот
-            wallObj.transform.position = wallData.position;
-            wallObj.transform.rotation = wallData.rotation;
-            
-            // Добавляем компоненты
-            MeshFilter meshFilter = wallObj.AddComponent<MeshFilter>();
-            MeshRenderer meshRenderer = wallObj.AddComponent<MeshRenderer>();
-            
-            // Создаем меш для стены
-            Mesh wallMesh = CreateWallMesh(wallData.width, wallData.height);
-            meshFilter.mesh = wallMesh;
-            
-            // Устанавливаем материал
-            meshRenderer.material = wallMaterial;
-            
-            // Добавляем ARPlaneVisualizer
-            ARPlaneVisualizer visualizer = wallObj.AddComponent<ARPlaneVisualizer>();
-            
-            // Помечаем как плоскость сегментации
-            visualizer.SetAsSegmentationPlane(true);
-            
-            // Добавляем в список текущих стен
-            currentWalls.Add(wallObj);
-        }
+        int updatedCount = 0;
         
-        Debug.Log($"Создано {currentWalls.Count} сегментированных стен");
-    }
-
-    /// <summary>
-    /// Очищает текущие объекты стен
-    /// </summary>
-    private void ClearCurrentWalls()
-    {
-        if (currentWalls != null)
+        // Перебираем все обнаруженные плоскости
+        foreach (var plane in planeManager.trackables)
         {
-            foreach (var wall in currentWalls)
+            // Проверяем, является ли плоскость стеной по маске сегментации
+            bool isWall = IsPlaneInSegmentationMask(plane, 0.3f); // Порог 30%
+            
+            // Получаем все визуализаторы на плоскости
+            ARPlaneVisualizer[] visualizers = plane.GetComponentsInChildren<ARPlaneVisualizer>();
+            
+            // Если визуализаторы есть, обновляем их статус
+            if (visualizers.Length > 0)
             {
-                if (wall != null)
+                foreach (var visualizer in visualizers)
                 {
-                    Destroy(wall);
+                    visualizer.SetAsSegmentationPlane(isWall);
+                    updatedCount++;
                 }
             }
-            
-            currentWalls.Clear();
+            // Если используем ARPlaneController, обновляем через него
+            else if (planeController != null)
+            {
+                planeController.SetSegmentationFlagForPlane(plane, isWall);
+                updatedCount++;
+            }
         }
-        else
-        {
-            currentWalls = new List<GameObject>();
-        }
-    }
-
-    /// <summary>
-    /// Создает меш для стены
-    /// </summary>
-    private Mesh CreateWallMesh(float width, float height)
-    {
-        Mesh mesh = new Mesh();
         
-        // Создаем вершины (простой прямоугольник)
-        Vector3[] vertices = new Vector3[4]
-        {
-            new Vector3(-width/2, -height/2, 0),
-            new Vector3(width/2, -height/2, 0),
-            new Vector3(width/2, height/2, 0),
-            new Vector3(-width/2, height/2, 0)
-        };
-        
-        // УФ-координаты
-        Vector2[] uv = new Vector2[4]
-        {
-            new Vector2(0, 0),
-            new Vector2(1, 0),
-            new Vector2(1, 1),
-            new Vector2(0, 1)
-        };
-        
-        // Треугольники
-        int[] triangles = new int[6]
-        {
-            0, 1, 2,
-            2, 3, 0
-        };
-        
-        // Установка данных в меш
-        mesh.vertices = vertices;
-        mesh.uv = uv;
-        mesh.triangles = triangles;
-        
-        // Пересчитываем нормали и границы
-        mesh.RecalculateNormals();
-        mesh.RecalculateBounds();
-        
-        return mesh;
+        Debug.Log($"WallSegmentation: Обновлен статус сегментации для {updatedCount} плоскостей");
     }
 } 

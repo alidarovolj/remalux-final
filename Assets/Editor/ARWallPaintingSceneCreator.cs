@@ -74,7 +74,38 @@ public class ARWallPaintingSceneCreator : Editor
         
         Debug.Log("Добавлен компонент ARWallVisualizationUI для управления визуализацией стен");
         
-        // 11. Проверяем все настройки компонентов AR
+        // 11. Настраиваем кнопку обновления сегментации
+        GameObject updateSegmentationButtonObj = GameObject.Find("UpdateSegmentationButton");
+        Button updateSegmentationButton = updateSegmentationButtonObj?.GetComponent<Button>();
+        WallSegmentation wallSegmentation = arRootObject.GetComponentInChildren<WallSegmentation>();
+
+        if (updateSegmentationButton != null && wallSegmentation != null)
+        {
+            // Создаем новый GameObject для хранения EventSystem, если его нет
+            if (GameObject.FindObjectOfType<UnityEngine.EventSystems.EventSystem>() == null)
+            {
+                GameObject eventSystemObj = new GameObject("EventSystem");
+                eventSystemObj.AddComponent<UnityEngine.EventSystems.EventSystem>();
+                eventSystemObj.AddComponent<UnityEngine.EventSystems.StandaloneInputModule>();
+                Debug.Log("Создан EventSystem для обработки UI событий");
+            }
+
+            // Создаем компонент для обработки нажатия на кнопку
+            GameObject segmentationUpdaterObj = new GameObject("SegmentationButtonHandler");
+            SegmentationButtonHandler handler = segmentationUpdaterObj.AddComponent<SegmentationButtonHandler>();
+            
+            // Настраиваем ссылки
+            SerializedObject serializedButtonHandler = new SerializedObject(handler);
+            serializedButtonHandler.FindProperty("wallSegmentation").objectReferenceValue = wallSegmentation;
+            serializedButtonHandler.ApplyModifiedProperties();
+            
+            // Привязываем обработчик к кнопке 
+            updateSegmentationButton.onClick.AddListener(delegate { handler.UpdateSegmentation(); });
+            
+            Debug.Log("Кнопка обновления сегментации настроена");
+        }
+        
+        // 12. Проверяем все настройки компонентов AR
         ValidateARSetup(arRootObject);
         
         // Сохраняем сцену если нужно
@@ -371,6 +402,36 @@ public class ARWallPaintingSceneCreator : Editor
         text.alignment = TextAnchor.MiddleCenter;
         text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
         
+        // Создаем кнопку для обновления сегментации
+        GameObject updateSegmentationButtonObj = new GameObject("UpdateSegmentationButton");
+        updateSegmentationButtonObj.transform.SetParent(canvasObj.transform);
+        RectTransform updateSegmentationButtonRect = updateSegmentationButtonObj.AddComponent<RectTransform>();
+        updateSegmentationButtonRect.anchorMin = new Vector2(0.6f, 0.9f);
+        updateSegmentationButtonRect.anchorMax = new Vector2(0.78f, 0.98f);
+        updateSegmentationButtonRect.offsetMin = Vector2.zero;
+        updateSegmentationButtonRect.offsetMax = Vector2.zero;
+        
+        Button updateSegmentationButton = updateSegmentationButtonObj.AddComponent<Button>();
+        Image buttonImage = updateSegmentationButtonObj.AddComponent<Image>();
+        buttonImage.color = new Color(0.3f, 0.6f, 0.9f, 1.0f);
+        updateSegmentationButton.targetGraphic = buttonImage;
+        
+        // Добавляем текст к кнопке
+        GameObject updateButtonTextObj = new GameObject("Text");
+        updateButtonTextObj.transform.SetParent(updateSegmentationButtonObj.transform);
+        RectTransform updateButtonTextRect = updateButtonTextObj.AddComponent<RectTransform>();
+        updateButtonTextRect.anchorMin = Vector2.zero;
+        updateButtonTextRect.anchorMax = Vector2.one;
+        updateButtonTextRect.offsetMin = Vector2.zero;
+        updateButtonTextRect.offsetMax = Vector2.zero;
+        
+        Text updateButtonText = updateButtonTextObj.AddComponent<Text>();
+        updateButtonText.text = "Обновить сегм.";
+        updateButtonText.color = Color.white;
+        updateButtonText.alignment = TextAnchor.MiddleCenter;
+        updateButtonText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        updateButtonText.fontSize = 14;
+        
         // Создаем RawImage для отображения сегментации стен
         GameObject rawImageObj = new GameObject("RawImage");
         rawImageObj.transform.SetParent(canvasObj.transform);
@@ -447,6 +508,29 @@ public class ARWallPaintingSceneCreator : Editor
         // Добавляем компонент WallSegmentation
         WallSegmentation wallSegmentation = segmentationManagerObj.AddComponent<WallSegmentation>();
         
+        // Настраиваем параметры для новой модели SegFormer
+        SerializedObject serializedWallSegmentation = new SerializedObject(wallSegmentation);
+
+        // Устанавливаем режим сегментации на ExternalModel
+        serializedWallSegmentation.FindProperty("currentMode").enumValueIndex = (int)WallSegmentation.SegmentationMode.ExternalModel;
+
+        // Устанавливаем путь к модели
+        serializedWallSegmentation.FindProperty("externalModelPath").stringValue = "Models/model.onnx";
+
+        // Задаем имена входного и выходного тензоров для SegFormer
+        serializedWallSegmentation.FindProperty("inputName").stringValue = "input";
+        serializedWallSegmentation.FindProperty("outputName").stringValue = "logits";
+
+        // Устанавливаем размеры входного изображения для SegFormer
+        serializedWallSegmentation.FindProperty("inputWidth").intValue = 512;
+        serializedWallSegmentation.FindProperty("inputHeight").intValue = 512;
+
+        // Устанавливаем индекс класса стены для ADE20K датасета
+        serializedWallSegmentation.FindProperty("wallClassIndex").intValue = 1;
+
+        // Применяем настройки
+        serializedWallSegmentation.ApplyModifiedProperties();
+        
         // Находим AR камеру и назначаем ее
         XROrigin xrOrigin = arRoot.GetComponentInChildren<XROrigin>();
         if (xrOrigin != null && xrOrigin.Camera != null)
@@ -454,19 +538,19 @@ public class ARWallPaintingSceneCreator : Editor
             ARCameraManager cameraManager = xrOrigin.Camera.GetComponent<ARCameraManager>();
             if (cameraManager != null)
             {
-                SerializedObject serializedObj = new SerializedObject(wallSegmentation);
-                SerializedProperty cameraManagerProp = serializedObj.FindProperty("cameraManager");
+                SerializedObject serializedCameraRef = new SerializedObject(wallSegmentation);
+                SerializedProperty cameraManagerProp = serializedCameraRef.FindProperty("cameraManager");
                 if (cameraManagerProp != null)
                 {
                     cameraManagerProp.objectReferenceValue = cameraManager;
-                    serializedObj.ApplyModifiedProperties();
+                    serializedCameraRef.ApplyModifiedProperties();
                 }
                 
-                SerializedProperty arCameraProp = serializedObj.FindProperty("arCamera");
+                SerializedProperty arCameraProp = serializedCameraRef.FindProperty("arCamera");
                 if (arCameraProp != null)
                 {
                     arCameraProp.objectReferenceValue = xrOrigin.Camera;
-                    serializedObj.ApplyModifiedProperties();
+                    serializedCameraRef.ApplyModifiedProperties();
                 }
             }
         }
@@ -475,20 +559,20 @@ public class ARWallPaintingSceneCreator : Editor
         RawImage debugImage = GameObject.Find("RawImage")?.GetComponent<RawImage>();
         if (debugImage != null)
         {
-            SerializedObject serializedObj = new SerializedObject(wallSegmentation);
-            SerializedProperty debugImageProp = serializedObj.FindProperty("debugImage");
+            SerializedObject serializedDebugRef = new SerializedObject(wallSegmentation);
+            SerializedProperty debugImageProp = serializedDebugRef.FindProperty("debugImage");
             if (debugImageProp != null)
             {
                 debugImageProp.objectReferenceValue = debugImage;
-                serializedObj.ApplyModifiedProperties();
+                serializedDebugRef.ApplyModifiedProperties();
             }
             
             // Включаем отладочную визуализацию
-            SerializedProperty showDebugProp = serializedObj.FindProperty("showDebugVisualisation");
+            SerializedProperty showDebugProp = serializedDebugRef.FindProperty("showDebugVisualisation");
             if (showDebugProp != null)
             {
                 showDebugProp.boolValue = true;
-                serializedObj.ApplyModifiedProperties();
+                serializedDebugRef.ApplyModifiedProperties();
                 Debug.Log("Включена отладочная визуализация в WallSegmentation");
             }
         }
@@ -500,16 +584,28 @@ public class ARWallPaintingSceneCreator : Editor
         // Добавляем также компонент DemoWallSegmentation
         DemoWallSegmentation demoWallSegmentation = segmentationManagerObj.AddComponent<DemoWallSegmentation>();
         
+        // Добавляем компонент OpenCVProcessor для постобработки сегментации
+        OpenCVProcessor openCVProcessor = segmentationManagerObj.AddComponent<OpenCVProcessor>();
+        Debug.Log("Добавлен OpenCVProcessor для улучшения результатов сегментации");
+
+        // Настраиваем параметры OpenCVProcessor через SerializedObject
+        SerializedObject serializedOpenCV = new SerializedObject(openCVProcessor);
+        if (debugImage != null)
+        {
+            serializedOpenCV.FindProperty("debugOutputImage").objectReferenceValue = debugImage;
+            serializedOpenCV.ApplyModifiedProperties();
+        }
+        
         // Назначаем AR плоскости и камеру для демо-сегментации
         ARPlaneManager planeManager = arRoot.GetComponentInChildren<ARPlaneManager>();
         if (planeManager != null)
         {
-            SerializedObject serializedObj = new SerializedObject(demoWallSegmentation);
-            SerializedProperty planeManagerProp = serializedObj.FindProperty("planeManager");
+            SerializedObject serializedDemoPlaneRef = new SerializedObject(demoWallSegmentation);
+            SerializedProperty planeManagerProp = serializedDemoPlaneRef.FindProperty("planeManager");
             if (planeManagerProp != null)
             {
                 planeManagerProp.objectReferenceValue = planeManager;
-                serializedObj.ApplyModifiedProperties();
+                serializedDemoPlaneRef.ApplyModifiedProperties();
             }
         }
         
@@ -519,12 +615,12 @@ public class ARWallPaintingSceneCreator : Editor
             ARCameraManager cameraManager = xrOrigin.Camera.GetComponent<ARCameraManager>();
             if (cameraManager != null)
             {
-                SerializedObject serializedObj = new SerializedObject(demoWallSegmentation);
-                SerializedProperty cameraManagerProp = serializedObj.FindProperty("cameraManager");
+                SerializedObject serializedDemoCamera = new SerializedObject(demoWallSegmentation);
+                SerializedProperty cameraManagerProp = serializedDemoCamera.FindProperty("cameraManager");
                 if (cameraManagerProp != null)
                 {
                     cameraManagerProp.objectReferenceValue = cameraManager;
-                    serializedObj.ApplyModifiedProperties();
+                    serializedDemoCamera.ApplyModifiedProperties();
                 }
             }
         }
@@ -532,12 +628,12 @@ public class ARWallPaintingSceneCreator : Editor
         // Назначаем RawImage для отображения демо-сегментации
         if (debugImage != null)
         {
-            SerializedObject serializedObj = new SerializedObject(demoWallSegmentation);
-            SerializedProperty debugImageProp = serializedObj.FindProperty("debugImage");
+            SerializedObject serializedDemoDebug = new SerializedObject(demoWallSegmentation);
+            SerializedProperty debugImageProp = serializedDemoDebug.FindProperty("debugImage");
             if (debugImageProp != null)
             {
                 debugImageProp.objectReferenceValue = debugImage;
-                serializedObj.ApplyModifiedProperties();
+                serializedDemoDebug.ApplyModifiedProperties();
             }
         }
         
