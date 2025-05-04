@@ -97,6 +97,15 @@ public class ARWallPaintingSceneCreator : Editor
             // Настраиваем ссылки
             SerializedObject serializedButtonHandler = new SerializedObject(handler);
             serializedButtonHandler.FindProperty("wallSegmentation").objectReferenceValue = wallSegmentation;
+            serializedButtonHandler.FindProperty("updateButton").objectReferenceValue = updateSegmentationButton;
+            
+            // Находим текст кнопки
+            Text buttonText = updateSegmentationButtonObj.GetComponentInChildren<Text>();
+            if (buttonText != null)
+            {
+                serializedButtonHandler.FindProperty("buttonText").objectReferenceValue = buttonText;
+            }
+            
             serializedButtonHandler.ApplyModifiedProperties();
             
             // Привязываем обработчик к кнопке 

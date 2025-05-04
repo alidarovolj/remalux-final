@@ -151,54 +151,150 @@ public class ARPlaneVisualizer : MonoBehaviour
         float width = size.x;
         float height = size.y;
         
-        // Получаем информацию об AR плоскости
+        // 1. Получаем центр плоскости и исходную нормаль
         Vector3 center = arPlane.center;
-        Vector3 normal = arPlane.normal;
+        Vector3 normal = arPlane.normal.normalized;
         
-        // Переменные для определения режима визуализации
-        float wallHeight = height;
-        Vector3 visualPosition = center;
-        
-        if (extendWalls && arPlane.alignment == PlaneAlignment.Vertical)
-        {
-            // Расширенный режим - увеличиваем высоту стены для лучшей визуализации
-            wallHeight = Mathf.Max(height, 2.0f); // Минимальная высота стены 2 метра
-            
-            // Корректируем положение центра с учетом увеличенной высоты
-            float heightDifference = wallHeight - height;
-            // Для стен сдвигаем центр вверх на половину разницы высот
-            visualPosition.y += heightDifference * 0.5f;
-        }
-        
-        // Параметр смещения от стены для избежания z-fighting
-        float offsetFromWall = 0.002f; // 2 мм
-        
-        if (useExactPlacement)
-        {
-            // Используем точное размещение без смещения
-            offsetFromWall = 0;
-        }
-        
-        // Применяем масштаб
-        transform.localScale = new Vector3(width, wallHeight, 1.0f);
-        
-        // Устанавливаем положение визуализации
-        transform.position = visualPosition;
-        
-        // Ориентируем визуализацию по нормали плоскости
-        if (normal != Vector3.zero)
-        {
-            // Создаем поворот, смотрящий в сторону нормали
-            transform.rotation = Quaternion.LookRotation(-normal);
-            
-            // Применяем небольшое смещение в направлении нормали для избежания z-fighting
-            transform.position += normal * offsetFromWall;
-        }
-        
-        // Отладка позиции
+        // 2. Отладка исходной информации
         if (debugPositioning)
         {
-            Debug.Log($"ARPlane: {arPlane.trackableId} - Позиция: {transform.position}, Нормаль: {normal}, Размер: {width}x{wallHeight}");
+            Debug.Log($"ARPlane: {arPlane.trackableId} - Исходные данные: center={center}, normal={normal}, size={size}, alignment={arPlane.alignment}");
+        }
+        
+        // 3. Проверяем тип плоскости для отладки
+        bool isVerticalPlane = arPlane.alignment == PlaneAlignment.Vertical || 
+                              (arPlane.alignment == PlaneAlignment.NotAxisAligned && 
+                               Vector3.Angle(normal, Vector3.up) > 60f);
+        
+        // 4. Определяем размеры для визуализации
+        float wallHeight = height;
+        if (extendWalls && isVerticalPlane)
+        {
+            wallHeight = Mathf.Max(height, minWallHeight);
+        }
+        
+        // 5. КАРДИНАЛЬНО НОВЫЙ ПОДХОД К ВЫЧИСЛЕНИЮ ОРИЕНТАЦИИ
+        
+        // Устанавливаем масштаб
+        transform.localScale = new Vector3(width, wallHeight, 0.01f); // Толщина стены 1 см
+        
+        // Прежде всего, убедимся, что нормаль вектор не равен нулю
+        if (normal.magnitude < 0.001f)
+        {
+            Debug.LogWarning($"ARPlane: {arPlane.trackableId} - Нормаль плоскости слишком близка к нулю");
+            normal = Vector3.forward; // Используем значение по умолчанию
+        }
+        
+        // Для вертикальных стен, гарантируем, что они действительно вертикальные
+        if (isVerticalPlane)
+        {
+            // Проецируем нормаль на горизонтальную плоскость
+            Vector3 horizontalNormal = new Vector3(normal.x, 0, normal.z).normalized;
+            
+            // Если проекция нормали слишком мала, используем вектор вперед или вправо
+            if (horizontalNormal.magnitude < 0.001f)
+            {
+                horizontalNormal = Vector3.forward;
+            }
+            
+            // Устанавливаем горизонтальную нормаль как направление вперед
+            Vector3 forwardDirection = -horizontalNormal; // Смотрим против нормали
+            
+            // Вверх всегда направлен вверх (строго вертикально)
+            Vector3 upDirection = Vector3.up;
+            
+            // Вычисляем правое направление как перпендикулярное к первым двум
+            Vector3 rightDirection = Vector3.Cross(upDirection, forwardDirection).normalized;
+            
+            // Еще раз уточняем направление вперед для ортогональности
+            forwardDirection = Vector3.Cross(rightDirection, upDirection).normalized;
+            
+            // Создаем ортогональную матрицу вращения
+            Quaternion rotationMatrix = Quaternion.LookRotation(forwardDirection, upDirection);
+            
+            // Устанавливаем вращение
+            transform.rotation = rotationMatrix;
+        }
+        else
+        {
+            // Для нестандартных плоскостей (не вертикальных) используем подход с максимальным совпадением с нормалью
+            // Стараемся сделать плоскость XY совпадающей с плоскостью обнаружения
+            
+            // Вектор "вперед" противоположен нормали
+            Vector3 forwardDirection = -normal;
+            
+            // Находим вектор "вверх", который максимально близок к глобальному вектору вверх
+            // но при этом перпендикулярен к forwardDirection
+            Vector3 approximateUp = Vector3.up;
+            Vector3 rightDirection = Vector3.Cross(approximateUp, forwardDirection).normalized;
+            
+            // Если правый вектор близок к нулю (нормаль почти параллельна вектору вверх)
+            // используем другой вектор для расчета правого направления
+            if (rightDirection.magnitude < 0.001f)
+            {
+                rightDirection = Vector3.Cross(Vector3.forward, forwardDirection).normalized;
+                
+                // Если и это не сработало, используем вектор вправо
+                if (rightDirection.magnitude < 0.001f)
+                {
+                    rightDirection = Vector3.right;
+                }
+            }
+            
+            // Рассчитываем точный вектор "вверх", перпендикулярный направлениям "вперед" и "вправо"
+            Vector3 upDirection = Vector3.Cross(forwardDirection, rightDirection).normalized;
+            
+            // Создаем матрицу вращения
+            Quaternion rotationMatrix = Quaternion.LookRotation(forwardDirection, upDirection);
+            
+            // Устанавливаем вращение
+            transform.rotation = rotationMatrix;
+        }
+        
+        // 6. Устанавливаем позицию
+        Vector3 visualPosition = center;
+        
+        // Корректируем позицию с учетом увеличенной высоты
+        if (extendWalls && isVerticalPlane && height < wallHeight)
+        {
+            float heightDifference = wallHeight - height;
+            // Поднимаем центр плоскости на половину разницы в высоте
+            visualPosition += transform.up * (heightDifference * 0.5f);
+        }
+        
+        transform.position = visualPosition;
+        
+        // 7. Применяем смещение от поверхности для избежания z-fighting
+        if (!useExactPlacement)
+        {
+            transform.position += normal * offsetFromSurface;
+        }
+        
+        // 8. Отладка
+        if (debugPositioning)
+        {
+            Debug.Log($"ARPlane: {arPlane.trackableId} - Вращение применено: position={transform.position}, rotation={transform.rotation.eulerAngles}");
+            Debug.Log($"ARPlane: {arPlane.trackableId} - Локальные оси: forward={transform.forward}, up={transform.up}, right={transform.right}");
+            
+            // Визуализируем векторы
+            Debug.DrawRay(transform.position, normal * 0.5f, Color.blue, 0.5f);
+            Debug.DrawRay(transform.position, transform.forward * 0.5f, Color.red, 0.5f);
+            Debug.DrawRay(transform.position, transform.up * 0.5f, Color.green, 0.5f);
+            Debug.DrawRay(transform.position, transform.right * 0.5f, Color.yellow, 0.5f);
+            
+            // Визуализируем углы плоскости
+            Debug.DrawLine(transform.position + transform.up * wallHeight/2 + transform.right * width/2, 
+                          transform.position + transform.up * wallHeight/2 - transform.right * width/2, 
+                          Color.magenta, 0.5f);
+            Debug.DrawLine(transform.position - transform.up * wallHeight/2 + transform.right * width/2, 
+                          transform.position - transform.up * wallHeight/2 - transform.right * width/2, 
+                          Color.magenta, 0.5f);
+            Debug.DrawLine(transform.position + transform.up * wallHeight/2 + transform.right * width/2, 
+                          transform.position - transform.up * wallHeight/2 + transform.right * width/2, 
+                          Color.magenta, 0.5f);
+            Debug.DrawLine(transform.position + transform.up * wallHeight/2 - transform.right * width/2, 
+                          transform.position - transform.up * wallHeight/2 - transform.right * width/2, 
+                          Color.magenta, 0.5f);
         }
     }
     

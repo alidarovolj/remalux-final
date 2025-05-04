@@ -148,7 +148,42 @@ public class ARWallPaintingApp : MonoBehaviour
                     {
                         uiManager.UpdateWallDetectionStatus(true);
                     }
+                    
+                    // Активируем отладку и настройки позиционирования для всех визуализаторов
+                    ActivatePlaneDebugAndPositioningSettings();
                 }
+            }
+        }
+    }
+    
+    // Активация отладки и настроек позиционирования для визуализаторов
+    private void ActivatePlaneDebugAndPositioningSettings()
+    {
+        // Находим контроллер плоскостей
+        ARPlaneController planeController = FindObjectOfType<ARPlaneController>();
+        if (planeController != null)
+        {
+            // Включаем отладку позиционирования
+            planeController.EnableDebugPositioningForAll(true);
+            
+            // Устанавливаем точное размещение
+            planeController.SetExactPlacementForAll(true);
+            
+            Debug.Log("ARWallPaintingApp: Активирован режим отладки и точного размещения для всех AR плоскостей");
+        }
+        else
+        {
+            ARWallVisualizationUI visualizationUI = FindObjectOfType<ARWallVisualizationUI>();
+            if (visualizationUI != null)
+            {
+                visualizationUI.EnableDebugPositioningForAllVisualizers(true);
+                visualizationUI.SetExactPlacementForAllVisualizers(true);
+                
+                Debug.Log("ARWallPaintingApp: Активирован режим отладки и точного размещения через UI контроллер");
+            }
+            else
+            {
+                Debug.LogWarning("ARWallPaintingApp: Не найдены компоненты для управления отладкой AR плоскостей");
             }
         }
     }

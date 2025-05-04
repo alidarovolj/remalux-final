@@ -49,6 +49,10 @@ public class ARWallVisualizationUI : MonoBehaviour
         {
             CreateUI();
         }
+        
+        // Активируем режим отладки позиционирования и включаем точное размещение
+        EnableDebugPositioningForAllVisualizers(true);
+        SetExactPlacementForAllVisualizers(true);
     }
     
     /// <summary>
@@ -304,6 +308,75 @@ public class ARWallVisualizationUI : MonoBehaviour
                              $"Размещение: {placementMode}\n" +
                              $"Стены: {wallMode}";
         }
+    }
+    
+    /// <summary>
+    /// Включает или отключает режим отладки позиционирования для всех ARPlaneVisualizer
+    /// </summary>
+    public void EnableDebugPositioningForAllVisualizers(bool enable)
+    {
+        if (planeManager == null) return;
+        
+        foreach (var plane in planeManager.trackables)
+        {
+            foreach (var visualizer in plane.GetComponentsInChildren<ARPlaneVisualizer>())
+            {
+                // Использование рефлексии для доступа к приватному полю
+                var debugField = visualizer.GetType().GetField("debugPositioning", 
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                
+                if (debugField != null)
+                {
+                    debugField.SetValue(visualizer, enable);
+                }
+            }
+        }
+        
+        Debug.Log($"Режим отладки позиционирования для всех визуализаторов: {(enable ? "включен" : "отключен")}");
+    }
+    
+    /// <summary>
+    /// Устанавливает режим точного размещения для всех ARPlaneVisualizer
+    /// </summary>
+    public void SetExactPlacementForAllVisualizers(bool exactPlacement)
+    {
+        if (planeManager == null) return;
+        
+        // Проверяем наличие контроллера плоскостей
+        ARPlaneController planeController = FindObjectOfType<ARPlaneController>();
+        if (planeController != null)
+        {
+            // Используем контроллер, если он есть
+            var method = planeController.GetType().GetMethod("SetExactPlacementForAll", 
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public);
+            
+            if (method != null)
+            {
+                method.Invoke(planeController, new object[] { exactPlacement });
+                Debug.Log($"Установлен режим точного размещения (через ARPlaneController): {exactPlacement}");
+                return;
+            }
+        }
+        
+        // Если контроллер не найден или метод отсутствует, устанавливаем напрямую
+        foreach (var plane in planeManager.trackables)
+        {
+            foreach (var visualizer in plane.GetComponentsInChildren<ARPlaneVisualizer>())
+            {
+                var exactField = visualizer.GetType().GetField("useExactPlacement", 
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                
+                if (exactField != null)
+                {
+                    exactField.SetValue(visualizer, exactPlacement);
+                    visualizer.UpdateVisual(); // Обновляем визуализацию после изменения
+                }
+            }
+        }
+        
+        Debug.Log($"Установлен режим точного размещения для всех визуализаторов: {exactPlacement}");
+        usingExactPlacement = exactPlacement;
+        UpdateStatusText();
     }
     
     private void OnDestroy()

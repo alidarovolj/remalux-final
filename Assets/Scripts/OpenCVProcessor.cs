@@ -116,22 +116,24 @@ public class OpenCVProcessor : MonoBehaviour
             Mat grayMat = new Mat();
             Imgproc.cvtColor(imageMat, grayMat, Imgproc.COLOR_RGBA2GRAY);
             
+            // Применяем пороговую обработку для получения бинарного изображения
+            // Это особенно важно для маски SegFormer, где нас интересует только класс "стена"
+            Mat binaryMat = new Mat();
+            Imgproc.threshold(grayMat, binaryMat, 100, 255, Imgproc.THRESH_BINARY);
+            
             // Размытие для удаления шума
             if (gaussianBlurSize > 0 && gaussianBlurSize % 2 == 1)
             {
-                Imgproc.GaussianBlur(grayMat, grayMat, new Size(gaussianBlurSize, gaussianBlurSize), 0);
+                Imgproc.GaussianBlur(binaryMat, binaryMat, new Size(gaussianBlurSize, gaussianBlurSize), 0);
             }
             
             if (medianBlurSize > 0 && medianBlurSize % 2 == 1)
             {
-                Imgproc.medianBlur(grayMat, grayMat, medianBlurSize);
+                Imgproc.medianBlur(binaryMat, binaryMat, medianBlurSize);
             }
             
-            // Бинаризация
-            Mat binaryMat = new Mat();
-            Imgproc.threshold(grayMat, binaryMat, 127, 255, Imgproc.THRESH_BINARY);
-            
-            // Морфологические операции
+            // Морфологические операции для улучшения маски
+            // Сначала эрозия для удаления мелких артефактов
             if (erosionSize > 0)
             {
                 Mat element = Imgproc.getStructuringElement(
@@ -143,6 +145,7 @@ public class OpenCVProcessor : MonoBehaviour
                 element.release();
             }
             
+            // Затем дилатация для заполнения дыр и соединения близких областей
             if (dilationSize > 0)
             {
                 Mat element = Imgproc.getStructuringElement(
@@ -163,25 +166,56 @@ public class OpenCVProcessor : MonoBehaviour
             Mat hierarchy = new Mat();
             Imgproc.findContours(cannyMat, contours, hierarchy, Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE);
             
+            // Фильтруем контуры по размеру - оставляем только большие контуры (стены)
+            List<MatOfPoint> filteredContours = new List<MatOfPoint>();
+            double minContourArea = inputTexture.width * inputTexture.height * 0.005; // Минимум 0.5% площади
+            foreach (var contour in contours)
+            {
+                double area = Imgproc.contourArea(contour);
+                if (area > minContourArea)
+                {
+                    filteredContours.Add(contour);
+                }
+                else
+                {
+                    contour.release();
+                }
+            }
+            
             // Заполняем контуры
             Mat contourMat = Mat.zeros(cannyMat.size(), CvType.CV_8UC1);
-            for (int i = 0; i < contours.Count; i++)
+            for (int i = 0; i < filteredContours.Count; i++)
             {
-                Imgproc.drawContours(contourMat, contours, i, new Scalar(255), -1);
-                contours[i].release();
+                Imgproc.drawContours(contourMat, filteredContours, i, new Scalar(255), -1);
+                filteredContours[i].release();
             }
+            
             hierarchy.release();
             
             // Объединяем результат с бинарной маской
             Mat resultMat = new Mat();
             Core.bitwise_or(binaryMat, contourMat, resultMat);
             
-            // Преобразуем обратно в RGBA
-            Mat resultRGBA = new Mat();
-            Imgproc.cvtColor(resultMat, resultRGBA, Imgproc.COLOR_GRAY2RGBA);
+            // Создаем цветную маску для визуализации
+            Mat colorMaskMat = new Mat();
+            Imgproc.cvtColor(resultMat, colorMaskMat, Imgproc.COLOR_GRAY2RGBA);
+            
+            // Устанавливаем синий оттенок для стен в цветной маске
+            for (int y = 0; y < colorMaskMat.rows(); y++)
+            {
+                for (int x = 0; x < colorMaskMat.cols(); x++)
+                {
+                    double[] pixel = colorMaskMat.get(y, x);
+                    if (pixel[0] > 0) // Если пиксель "включен"
+                    {
+                        // Устанавливаем синий цвет
+                        colorMaskMat.put(y, x, 0, 180, 255, 200); // R=0, G=180, B=255, A=200
+                    }
+                }
+            }
             
             // Обновляем текстуру результата
-            Utils.matToTexture2D(resultRGBA, processedTexture);
+            Utils.matToTexture2D(colorMaskMat, processedTexture);
             
             // Обновляем отладочную текстуру и UI
             if (showDebugVisuals && debugOutputImage != null)
@@ -201,11 +235,11 @@ public class OpenCVProcessor : MonoBehaviour
             cannyMat.release();
             contourMat.release();
             resultMat.release();
-            resultRGBA.release();
+            colorMaskMat.release();
             
             if (showDebugVisuals)
             {
-                Debug.Log("OpenCV: Обработка маски завершена");
+                Debug.Log("OpenCV: Обработка маски завершена с улучшенными фильтрами");
             }
             
             return processedTexture;

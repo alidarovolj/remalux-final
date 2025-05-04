@@ -9,6 +9,7 @@ using Unity.Barracuda.ONNX;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using UnityEngine.XR.ARFoundation;
+using UnityEngine.XR.ARSubsystems;
 using UnityEngine.UI;
 using Unity.XR.CoreUtils;
 
@@ -71,6 +72,8 @@ public class WallSegmentation : MonoBehaviour
     [SerializeField] private bool showDebugVisualisation = true;
     [SerializeField] private RawImage debugImage;
     [SerializeField] private float processingInterval = 0.3f;
+    [SerializeField] private bool enableDebugLogs = true; // Добавлен флаг включения отладочных логов
+    [SerializeField] private bool useARPlaneController = true; // Использовать ARPlaneController для управления плоскостями
     
     [Header("Wall Visualization")]
     [SerializeField] private Material wallMaterial; // Материал для стен
@@ -130,6 +133,12 @@ public class WallSegmentation : MonoBehaviour
         
         // Инициализация обработки через интервал времени
         StartCoroutine(ProcessFrames());
+        
+        // Подписываемся на событие обнаружения новых плоскостей
+        SubscribeToPlaneEvents();
+        
+        // Через небольшую задержку запускаем первое обновление сегментации
+        StartCoroutine(DelayedFirstSegmentationUpdate());
     }
     
     // Дополнительный метод для импорта ONNX модели
@@ -489,17 +498,27 @@ public class WallSegmentation : MonoBehaviour
             OpenCVProcessor openCVProcessor = GetComponent<OpenCVProcessor>();
             if (openCVProcessor != null && segmentationResult != null)
             {
+                Debug.Log("WallSegmentation: Применяем постобработку OpenCV к результату сегментации");
                 Texture2D enhancedMask = openCVProcessor.EnhanceSegmentationMask(segmentationResult);
                 if (enhancedMask != null)
                 {
+                    // Освобождаем память от оригинального результата сегментации
+                    if (segmentationResult != enhancedMask)
+                    {
+                        Destroy(segmentationResult);
+                    }
                     return enhancedMask;
                 }
             }
+            else if (openCVProcessor == null)
+            {
+                Debug.LogWarning("WallSegmentation: OpenCVProcessor не найден, постобработка не будет применена");
+            }
             
             return segmentationResult;
-                }
-                catch (System.Exception e)
-                {
+        }
+        catch (System.Exception e)
+        {
             Debug.LogError($"Ошибка при сегментации: {e.Message}\n{e.StackTrace}");
             return null;
         }
@@ -666,12 +685,12 @@ public class WallSegmentation : MonoBehaviour
             RenderTexture.ReleaseTemporary(rt);
             
             // Освобождаем предыдущий тензор, если он существует
-        if (inputTensor != null)
-        {
-            inputTensor.Dispose();
-            inputTensor = null;
-        }
-        
+            if (inputTensor != null)
+            {
+                inputTensor.Dispose();
+                inputTensor = null;
+            }
+            
             // Создаем тензор в формате NCHW (batch, channels, height, width)
             inputTensor = new Tensor(resizedTexture, channels: 3);
             
@@ -783,10 +802,10 @@ public class WallSegmentation : MonoBehaviour
         }
         finally
         {
-        if (inputTensor != null)
-        {
-            inputTensor.Dispose();
-            inputTensor = null;
+            if (inputTensor != null)
+            {
+                inputTensor.Dispose();
+                inputTensor = null;
             }
         }
     }
@@ -1087,29 +1106,151 @@ public class WallSegmentation : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// Обновляет статус всех AR плоскостей на основе результатов сегментации
-    /// </summary>
-    public void UpdatePlanesSegmentationStatus()
+    // Подписка на события обнаружения плоскостей
+    private void SubscribeToPlaneEvents()
+    {
+        ARPlaneManager planeManager = FindObjectOfType<ARPlaneManager>();
+        if (planeManager != null)
+        {
+            // Подписываемся на событие изменения плоскостей
+            planeManager.planesChanged += OnPlanesChanged;
+            Debug.Log("WallSegmentation: Подписка на событие обнаружения плоскостей выполнена");
+        }
+        else
+        {
+            Debug.LogWarning("WallSegmentation: ARPlaneManager не найден, автоматическое обновление при новых плоскостях недоступно");
+        }
+    }
+
+    // Отписка от событий при уничтожении объекта
+    private void OnDestroy()
+    {
+        ARPlaneManager planeManager = FindObjectOfType<ARPlaneManager>();
+        if (planeManager != null)
+        {
+            planeManager.planesChanged -= OnPlanesChanged;
+        }
+    }
+
+    // Обработчик события обнаружения новых плоскостей
+    private void OnPlanesChanged(ARPlanesChangedEventArgs args)
+    {
+        if (args.added != null && args.added.Count > 0)
+        {
+            Debug.Log($"WallSegmentation: Обнаружено {args.added.Count} новых AR плоскостей, запускаем обновление сегментации");
+            // Не запускаем обновление мгновенно, добавляем небольшую задержку для стабилизации
+            StartCoroutine(DelayedSegmentationUpdate());
+        }
+    }
+
+    // Корутина для задержки первого обновления сегментации
+    private IEnumerator DelayedFirstSegmentationUpdate()
+    {
+        // Ждем 2 секунды после инициализации, чтобы AR успел обнаружить плоскости
+        yield return new WaitForSeconds(2.0f);
+        UpdatePlanesSegmentationStatus();
+        Debug.Log("WallSegmentation: Выполнено первое обновление статуса сегментации");
+    }
+
+    // Корутина для задержки обновления сегментации
+    private IEnumerator DelayedSegmentationUpdate()
+    {
+        // Ждем 1 секунду после обнаружения новых плоскостей
+        yield return new WaitForSeconds(1.0f);
+        UpdatePlanesSegmentationStatus();
+    }
+
+    // Обновляет статус всех AR плоскостей на основе результатов сегментации
+    // Метод теперь возвращает количество обработанных плоскостей
+    public int UpdatePlanesSegmentationStatus()
     {
         // Получаем ссылку на ARPlaneManager
         ARPlaneManager planeManager = FindObjectOfType<ARPlaneManager>();
         if (planeManager == null)
         {
             Debug.LogWarning("WallSegmentation: ARPlaneManager не найден в сцене");
-            return;
+            return 0;
         }
         
-        // Получаем ссылку на ARPlaneController
-        ARPlaneController planeController = FindObjectOfType<ARPlaneController>();
+        // Используем новый метод для применения маски к плоскостям
+        int updatedCount = AssignMaskToARPlanes();
+        
+        return updatedCount;
+    }
+    
+    /// <summary>
+    /// Применяет маску сегментации к обнаруженным AR плоскостям
+    /// </summary>
+    /// <returns>Количество обновленных плоскостей</returns>
+    private int AssignMaskToARPlanes()
+    {
+        // Получаем ссылку на ARPlaneManager
+        ARPlaneManager planeManager = FindObjectOfType<ARPlaneManager>();
+        if (planeManager == null)
+        {
+            Debug.LogWarning("WallSegmentation: AR Plane Manager отсутствует");
+            return 0;
+        }
         
         int updatedCount = 0;
+        int wallCount = 0;
         
-        // Перебираем все обнаруженные плоскости
+        // Получаем контроллер AR плоскостей, если он есть
+        ARPlaneController planeController = null;
+        if (useARPlaneController)
+        {
+            planeController = FindObjectOfType<ARPlaneController>();
+            if (planeController == null && enableDebugLogs)
+            {
+                Debug.LogWarning("WallSegmentation: Не найден ARPlaneController, хотя был запрошен его поиск");
+            }
+        }
+        
+        // Проходим по всем обнаруженным плоскостям
         foreach (var plane in planeManager.trackables)
         {
             // Проверяем, является ли плоскость стеной по маске сегментации
             bool isWall = IsPlaneInSegmentationMask(plane, 0.3f); // Порог 30%
+            
+            // Проверяем ориентацию плоскости
+            bool isVerticalPlane = IsVerticalPlane(plane);
+            
+            // Если это стена по сегментации и плоскость вертикальная, увеличиваем счетчик
+            if (isWall && isVerticalPlane)
+            {
+                wallCount++;
+                if (enableDebugLogs)
+                {
+                    float angleWithUp = Vector3.Angle(plane.normal, Vector3.up);
+                    Debug.Log($"WallSegmentation: Плоскость {plane.trackableId} определена как стена " +
+                              $"(Выравнивание: {plane.alignment}, Нормаль: {plane.normal}, Угол с вертикалью: {angleWithUp}°)");
+                }
+            }
+            else if (isWall && !isVerticalPlane)
+            {
+                // Подозрительная ситуация - маска показывает стену, но плоскость не вертикальная
+                if (enableDebugLogs)
+                {
+                    float angleWithUp = Vector3.Angle(plane.normal, Vector3.up);
+                    Debug.LogWarning($"WallSegmentation: Плоскость {plane.trackableId} определена как стена по сегментации, " +
+                                     $"но имеет невертикальное выравнивание {plane.alignment}! Угол с вертикалью: {angleWithUp}°");
+                }
+                
+                // Если угол с вертикалью между 60° и 120°, считаем её стеной даже если alignment не Vertical
+                if (IsNearlyVertical(plane.normal))
+                {
+                    if (enableDebugLogs)
+                    {
+                        Debug.Log($"WallSegmentation: Плоскость {plane.trackableId} принудительно считаем стеной из-за вертикальной нормали");
+                    }
+                    // Оставляем isWall = true
+                    wallCount++;
+                }
+                else
+                {
+                    isWall = false; // Не обрабатываем как стену
+                }
+            }
             
             // Получаем все визуализаторы на плоскости
             ARPlaneVisualizer[] visualizers = plane.GetComponentsInChildren<ARPlaneVisualizer>();
@@ -1131,6 +1272,73 @@ public class WallSegmentation : MonoBehaviour
             }
         }
         
-        Debug.Log($"WallSegmentation: Обновлен статус сегментации для {updatedCount} плоскостей");
+        Debug.Log($"WallSegmentation: Обновлен статус сегментации для {updatedCount} плоскостей, обнаружено {wallCount} стен");
+        
+        // Обновляем информацию AR Debug Manager, если он есть
+        UpdateARDebugInfo(wallCount);
+        
+        return updatedCount;
+    }
+    
+    /// <summary>
+    /// Проверяет, является ли плоскость вертикальной (стеной) по её выравниванию и нормали
+    /// </summary>
+    private bool IsVerticalPlane(ARPlane plane)
+    {
+        // Проверяем выравнивание плоскости
+        bool isVerticalAlignment = plane.alignment == PlaneAlignment.Vertical;
+        
+        // Проверяем также нестандартно выровненные плоскости
+        bool isNonAxisAligned = plane.alignment == PlaneAlignment.NotAxisAligned;
+        
+        // Если плоскость не оси или вертикальная, проверяем угол с вертикалью
+        if (isNonAxisAligned || (!isVerticalAlignment && plane.normal != Vector3.zero))
+        {
+            return IsNearlyVertical(plane.normal);
+        }
+        
+        return isVerticalAlignment;
+    }
+    
+    /// <summary>
+    /// Проверяет, близок ли вектор нормали к вертикальной плоскости (угол с вертикалью между 60° и 120°)
+    /// </summary>
+    private bool IsNearlyVertical(Vector3 normal)
+    {
+        if (normal == Vector3.zero) return false;
+        
+        // Вычисляем угол между нормалью и вектором вверх
+        float angleWithUp = Vector3.Angle(normal, Vector3.up);
+        
+        // Считаем вертикальным, если угол с вертикалью большой (близко к 90°)
+        // Обычно вертикальные плоскости имеют угол 90° ± 30°
+        return angleWithUp > 60f && angleWithUp < 120f;
+    }
+
+    // Обновляет информацию AR Debug Manager о количестве стен
+    private void UpdateARDebugInfo(int wallCount)
+    {
+        ARDebugManager debugManager = FindObjectOfType<ARDebugManager>();
+        if (debugManager != null)
+        {
+            // Проверяем наличие метода для обновления информации о стенах
+            var updateWallsMethod = debugManager.GetType().GetMethod("UpdateWallsDetected");
+            if (updateWallsMethod != null)
+            {
+                updateWallsMethod.Invoke(debugManager, new object[] { wallCount });
+            }
+        }
+    }
+
+    /// <summary>
+    /// Обрабатывает уведомление о новых AR плоскостях от ARPlaneController
+    /// </summary>
+    /// <param name="planeCount">Количество новых плоскостей</param>
+    public void HandleNewARPlanes(int planeCount)
+    {
+        Debug.Log($"WallSegmentation: Получено уведомление о {planeCount} новых AR плоскостях");
+        
+        // Запускаем обновление сегментации с задержкой
+        StartCoroutine(DelayedSegmentationUpdate());
     }
 } 

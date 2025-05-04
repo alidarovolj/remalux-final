@@ -28,19 +28,19 @@ public class ARPlaneController : MonoBehaviour
             }
         }
         
-        // Если нужно скрыть стандартные плоскости
-        if (hideDefaultPlanes)
-        {
-            HideDefaultPlanes();
-            
-            // Подписываемся на событие изменения плоскостей, чтобы скрывать новые
-            planeManager.planesChanged += OnPlanesChanged;
-        }
+        // Подписываемся на событие изменения плоскостей
+        planeManager.planesChanged += OnPlanesChanged;
         
         if (forceUpdateOnStart)
         {
             // Запускаем обновление с задержкой, чтобы убедиться, что все компоненты инициализированы
             StartCoroutine(ForceUpdatePlanesWithDelay());
+        }
+        
+        // Запускаем скрытие стандартных плоскостей с задержкой
+        if (hideDefaultPlanes)
+        {
+            StartCoroutine(DelayedHideDefaultPlanes());
         }
     }
     
@@ -57,14 +57,61 @@ public class ARPlaneController : MonoBehaviour
     /// </summary>
     private void OnPlanesChanged(ARPlanesChangedEventArgs args)
     {
-        if (hideDefaultPlanes && args.added != null && args.added.Count > 0)
+        // Обрабатываем только добавленные плоскости
+        if (args.added != null && args.added.Count > 0)
         {
+            Debug.Log($"ARPlaneController: Обнаружено {args.added.Count} новых AR плоскостей");
+            
             // Для каждой новой плоскости вызываем обработку
             foreach (var plane in args.added)
             {
                 ProcessPlane(plane);
             }
+            
+            // Уведомляем WallSegmentation о новых плоскостях, чтобы запустить обновление сегментации
+            NotifyWallSegmentationAboutNewPlanes(args.added.Count);
         }
+    }
+    
+    /// <summary>
+    /// Уведомляет WallSegmentation о новых плоскостях для запуска обновления сегментации
+    /// </summary>
+    private void NotifyWallSegmentationAboutNewPlanes(int planeCount)
+    {
+        // Находим WallSegmentation и уведомляем его о новых плоскостях
+        WallSegmentation wallSegmentation = FindObjectOfType<WallSegmentation>();
+        if (wallSegmentation != null)
+        {
+            // Проверяем наличие метода для обработки новых плоскостей через рефлексию,
+            // чтобы не создавать прямую зависимость между классами
+            var handleNewPlanesMethod = wallSegmentation.GetType().GetMethod("HandleNewARPlanes", 
+                                                             System.Reflection.BindingFlags.Instance | 
+                                                             System.Reflection.BindingFlags.Public | 
+                                                             System.Reflection.BindingFlags.NonPublic);
+            if (handleNewPlanesMethod != null)
+            {
+                handleNewPlanesMethod.Invoke(wallSegmentation, new object[] { planeCount });
+                Debug.Log($"ARPlaneController: WallSegmentation уведомлен о {planeCount} новых плоскостях");
+            }
+            else
+            {
+                // Резервный вариант - запрашиваем прямое обновление сегментации
+                StartCoroutine(DelayedSegmentationUpdate(wallSegmentation));
+            }
+        }
+    }
+    
+    /// <summary>
+    /// Запускает обновление сегментации с задержкой
+    /// </summary>
+    private IEnumerator DelayedSegmentationUpdate(WallSegmentation wallSegmentation)
+    {
+        // Ждем 1 секунду для стабилизации AR плоскостей
+        yield return new WaitForSeconds(1.0f);
+        
+        // Обновляем сегментацию
+        wallSegmentation.UpdatePlanesSegmentationStatus();
+        Debug.Log("ARPlaneController: Запущено обновление статуса сегментации после обнаружения новых плоскостей");
     }
     
     /// <summary>
@@ -286,6 +333,108 @@ public class ARPlaneController : MonoBehaviour
         if (enableDebugLogs)
         {
             Debug.Log($"ARPlaneController: Установлен флаг isSegmentationPlane={isSegmentationPlane} для плоскости {plane.trackableId}");
+        }
+    }
+    
+    /// <summary>
+    /// Скрывает стандартные плоскости с задержкой, чтобы сегментация успела сначала запуститься
+    /// </summary>
+    private IEnumerator DelayedHideDefaultPlanes()
+    {
+        // Ждем несколько секунд, чтобы сегментация успела инициализироваться
+        yield return new WaitForSeconds(updateDelay);
+        
+        // Проверяем, запущена ли уже сегментация
+        WallSegmentation wallSegmentation = FindObjectOfType<WallSegmentation>();
+        if (wallSegmentation != null && wallSegmentation.GetSegmentationTexture() != null)
+        {
+            // Сегментация уже работает, можно скрывать плоскости
+            HideDefaultPlanes();
+            Debug.Log("ARPlaneController: Стандартные AR плоскости скрыты после инициализации сегментации");
+        }
+        else
+        {
+            // Сегментация еще не запущена, ждем еще немного
+            yield return new WaitForSeconds(2.0f);
+            HideDefaultPlanes();
+            Debug.Log("ARPlaneController: Стандартные AR плоскости скрыты после ожидания");
+        }
+    }
+    
+    /// <summary>
+    /// Устанавливает режим точного размещения для всех визуализаторов
+    /// </summary>
+    /// <param name="exactPlacement">True - точное размещение, False - со смещением</param>
+    public void SetExactPlacementForAll(bool exactPlacement)
+    {
+        if (planeManager == null) return;
+        
+        int updatedCount = 0;
+        
+        foreach (var plane in planeManager.trackables)
+        {
+            foreach (var visualizer in plane.GetComponentsInChildren<ARPlaneVisualizer>())
+            {
+                // Используем рефлексию для доступа к приватному полю
+                var field = visualizer.GetType().GetField("useExactPlacement", 
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                
+                if (field != null)
+                {
+                    bool currentValue = (bool)field.GetValue(visualizer);
+                    
+                    // Меняем значение только если оно отличается
+                    if (currentValue != exactPlacement)
+                    {
+                        field.SetValue(visualizer, exactPlacement);
+                        visualizer.UpdateVisual();
+                        updatedCount++;
+                    }
+                }
+            }
+        }
+        
+        if (enableDebugLogs)
+        {
+            Debug.Log($"ARPlaneController: Установлен режим точного размещения ({exactPlacement}) для {updatedCount} визуализаторов");
+        }
+    }
+    
+    /// <summary>
+    /// Включает или отключает режим отладки позиционирования для всех визуализаторов
+    /// </summary>
+    /// <param name="enableDebug">True - включить отладку, False - отключить</param>
+    public void EnableDebugPositioningForAll(bool enableDebug)
+    {
+        if (planeManager == null) return;
+        
+        int updatedCount = 0;
+        
+        foreach (var plane in planeManager.trackables)
+        {
+            foreach (var visualizer in plane.GetComponentsInChildren<ARPlaneVisualizer>())
+            {
+                // Используем рефлексию для доступа к приватному полю
+                var field = visualizer.GetType().GetField("debugPositioning", 
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                
+                if (field != null)
+                {
+                    bool currentValue = (bool)field.GetValue(visualizer);
+                    
+                    // Меняем значение только если оно отличается
+                    if (currentValue != enableDebug)
+                    {
+                        field.SetValue(visualizer, enableDebug);
+                        updatedCount++;
+                    }
+                }
+            }
+        }
+        
+        if (enableDebugLogs)
+        {
+            Debug.Log($"ARPlaneController: {(enableDebug ? "Включен" : "Отключен")} режим отладки позиционирования для {updatedCount} визуализаторов");
         }
     }
 } 

@@ -17,6 +17,9 @@ public class ARDebugManager : MonoBehaviour
     [Header("UI")]
     [SerializeField] private UnityEngine.UI.Text debugText;
     
+    // Для отслеживания количества обнаруженных стен
+    private int wallsDetected = 0;
+
     private void Start()
     {
         // Находим компоненты, если они не назначены
@@ -126,5 +129,11 @@ public class ARDebugManager : MonoBehaviour
             debugText.raycastTarget = false;
             debugText.alignment = TextAnchor.UpperLeft;
         }
+    }
+
+    // Метод для обновления количества обнаруженных стен
+    public void UpdateWallsDetected(int count)
+    {
+        wallsDetected = count;
     }
 } 
