@@ -3,6 +3,7 @@ using UnityEngine.XR.ARFoundation;
 using System.Collections;
 using System; // Для доступа к системным типам
 using System.Linq; // Для использования LINQ
+using System.Text; // Для использования StringBuilder
 
 /// <summary>
 /// Контроллер для управления AR плоскостями
@@ -17,6 +18,10 @@ public class ARPlaneController : MonoBehaviour
     [SerializeField] private float updateDelay = 1.0f;
     [SerializeField] private bool enableDebugLogs = true;
     [SerializeField] private bool hideDefaultPlanes = true; // Скрывать стандартные AR плоскости
+    
+    [Header("Wall Generation Settings")]
+    [SerializeField] private bool autoGenerateFullWallModels = true; // Автоматически генерировать полные модели стен
+    [SerializeField] private float wallGenerationDelay = 0.5f; // Задержка перед генерацией стен (в секундах)
     
     private void Start()
     {
@@ -43,6 +48,12 @@ public class ARPlaneController : MonoBehaviour
         if (hideDefaultPlanes)
         {
             StartCoroutine(DelayedHideDefaultPlanes());
+        }
+        
+        // Запускаем генерацию полных моделей стен с задержкой
+        if (autoGenerateFullWallModels)
+        {
+            StartCoroutine(DelayedGenerateWallModels(2.0f));
         }
     }
     
@@ -72,6 +83,12 @@ public class ARPlaneController : MonoBehaviour
             
             // Уведомляем WallSegmentation о новых плоскостях, чтобы запустить обновление сегментации
             NotifyWallSegmentationAboutNewPlanes(args.added.Count);
+            
+            // Если включена автоматическая генерация полных моделей стен, запускаем её с небольшой задержкой
+            if (autoGenerateFullWallModels)
+            {
+                StartCoroutine(DelayedGenerateWallModels(wallGenerationDelay));
+            }
         }
     }
     
@@ -579,5 +596,135 @@ public class ARPlaneController : MonoBehaviour
         mesh.RecalculateBounds();
         
         return mesh;
+    }
+    
+    /// <summary>
+    /// Устанавливает смещение от поверхности для всех визуализаторов плоскостей
+    /// </summary>
+    /// <param name="offset">Смещение в метрах (отрицательное значение - ближе к поверхности)</param>
+    public void SetOffsetFromSurfaceForAll(float offset)
+    {
+        if (planeManager == null) return;
+        
+        int updatedCount = 0;
+        
+        foreach (var plane in planeManager.trackables)
+        {
+            ARPlaneVisualizer visualizer = plane.GetComponentInChildren<ARPlaneVisualizer>();
+            if (visualizer != null)
+            {
+                visualizer.SetOffsetFromSurface(offset);
+                updatedCount++;
+            }
+        }
+        
+        if (enableDebugLogs)
+        {
+            Debug.Log($"ARPlaneController: Установлено смещение от поверхности {offset}м для {updatedCount} визуализаторов плоскостей");
+        }
+    }
+    
+    /// <summary>
+    /// Проверяет положение всех плоскостей и возвращает отчет
+    /// </summary>
+    /// <returns>Строка с отчетом о проверке всех плоскостей</returns>
+    public string CheckAllPlanePositions()
+    {
+        if (planeManager == null) return "ARPlaneManager не найден";
+        
+        StringBuilder report = new StringBuilder();
+        report.AppendLine("=== ОТЧЕТ О ПОЛОЖЕНИИ ПЛОСКОСТЕЙ ===");
+        
+        int totalPlanes = 0;
+        int verticalPlanes = 0;
+        
+        foreach (var plane in planeManager.trackables)
+        {
+            totalPlanes++;
+            ARPlaneVisualizer visualizer = plane.GetComponentInChildren<ARPlaneVisualizer>();
+            
+            if (visualizer != null)
+            {
+                string planeReport = visualizer.CheckPlanePosition();
+                report.AppendLine(planeReport);
+                report.AppendLine("---");
+                
+                // Считаем вертикальные плоскости
+                if (plane.alignment == UnityEngine.XR.ARSubsystems.PlaneAlignment.Vertical)
+                {
+                    verticalPlanes++;
+                }
+            }
+            else
+            {
+                report.AppendLine($"Плоскость {plane.trackableId}: Визуализатор не найден");
+                report.AppendLine("---");
+            }
+        }
+        
+        report.AppendLine($"Всего плоскостей: {totalPlanes}, из них вертикальных: {verticalPlanes}");
+        report.AppendLine("=================================");
+        
+        string reportText = report.ToString();
+        
+        if (enableDebugLogs)
+        {
+            Debug.Log(reportText);
+        }
+        
+        return reportText;
+    }
+    
+    /// <summary>
+    /// Создает полные модели стен на основе обнаруженных AR-плоскостей
+    /// </summary>
+    public void GenerateFullWallModels()
+    {
+        if (planeManager == null) return;
+        
+        int wallCount = 0;
+        
+        Debug.Log("ARPlaneController: Генерация полных моделей стен...");
+        
+        // Перебираем все плоскости и создаем полные стены для вертикальных плоскостей
+        foreach (var plane in planeManager.trackables)
+        {
+            if (plane.alignment == UnityEngine.XR.ARSubsystems.PlaneAlignment.Vertical)
+            {
+                // Получаем визуализатор плоскости
+                ARPlaneVisualizer visualizer = plane.GetComponentInChildren<ARPlaneVisualizer>();
+                
+                if (visualizer != null)
+                {
+                    // Устанавливаем флаг сегментации (чтобы плоскость была видимой)
+                    visualizer.SetAsSegmentationPlane(true);
+                    
+                    // Включаем расширение стен
+                    visualizer.SetExtendWalls(true);
+                    
+                    // Обновляем визуализацию
+                    visualizer.UpdateVisual();
+                    
+                    wallCount++;
+                }
+            }
+        }
+        
+        if (enableDebugLogs)
+        {
+            Debug.Log($"ARPlaneController: Созданы полные модели для {wallCount} стен");
+        }
+    }
+    
+    /// <summary>
+    /// Запускает генерацию полных моделей стен с задержкой
+    /// </summary>
+    private IEnumerator DelayedGenerateWallModels(float delay)
+    {
+        // Ждем указанное время
+        yield return new WaitForSeconds(delay);
+        
+        // Генерируем полные модели стен
+        GenerateFullWallModels();
     }
 } 

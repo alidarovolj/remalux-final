@@ -21,12 +21,23 @@ public class DemoWallSegmentation : MonoBehaviour
     [SerializeField] private RawImage debugImage;
     [SerializeField] private float updateInterval = 0.5f; // как часто обновлять визуализацию
     [SerializeField] private Text wallCountText; // Текст для отображения количества стен
+    [SerializeField] private Color wallOverlayColor = new Color(1, 0, 0, 0.5f); // Цвет наложения для стен
+    
+    [Header("Fullscreen Mode Settings")]
+    [SerializeField] private float fullscreenAlpha = 0.7f; // Прозрачность визуализации
+    [SerializeField] private Color fullscreenWallColor = new Color(0.8f, 0.2f, 0.2f, 0.5f); // Цвет стен
+    [SerializeField] private int fullscreenBrushSize = 12; // Размер кисти
+    
+    [Header("UI Elements")]
+    [SerializeField] private bool showHelpTooltip = true; // Показывать подсказку о переключении режима
+    [SerializeField] private float tooltipDuration = 3f; // Длительность отображения подсказки в секундах
     
     // Приватные переменные
     private Texture2D segmentationTexture;
     private bool isProcessing = false;
     private float lastUpdateTime = 0;
     private int lastWallCount = 0;
+    private RectTransform debugImageRectTransform; // Ссылка на RectTransform для изменения размера
     
     // Start is called before the first frame update
     void Start()
@@ -43,6 +54,13 @@ public class DemoWallSegmentation : MonoBehaviour
         // Создаем текстуру для отображения сегментации
         segmentationTexture = new Texture2D(Screen.width, Screen.height, TextureFormat.RGBA32, false);
         ClearSegmentationTexture();
+        
+        // Получаем ссылку на RectTransform для debugImage
+        if (debugImage != null)
+        {
+            debugImageRectTransform = debugImage.GetComponent<RectTransform>();
+            UpdateDebugImageSize();
+        }
     }
     
     // Update is called once per frame
@@ -97,7 +115,11 @@ public class DemoWallSegmentation : MonoBehaviour
         // Отображаем результат
         if (showDebugVisualization && debugImage != null)
         {
+            // Обновляем текстуру
             debugImage.texture = segmentationTexture;
+            
+            // Обновляем размеры в соответствии с режимом отображения
+            UpdateDebugImageAppearance();
             
             // Выводим сообщение только при первом обновлении или при изменении количества стен
             if (Time.frameCount % 300 == 0 || wallCount != lastWallCount)
@@ -227,9 +249,9 @@ public class DemoWallSegmentation : MonoBehaviour
         var vertices = mesh.vertices;
         var planeTransform = plane.transform;
         
-        // Более яркий и заметный цвет для стены
-        Color wallColor = new Color(1, 0, 0, 0.8f); // Яркий красный с высокой непрозрачностью
-        Color edgeColor = new Color(1, 1, 0, 0.6f); // Желтый для краев
+        // Используем цвет из настроек для визуализации в зависимости от режима
+        Color currentWallColor = fullscreenWallColor;
+        Color edgeColor = new Color(currentWallColor.r, currentWallColor.g + 0.2f, currentWallColor.b, currentWallColor.a + 0.2f); // Более яркий цвет для краев
         
         // Проецируем каждую вершину на экран и закрашиваем соответствующие области
         foreach (var vertex in vertices)
@@ -249,26 +271,28 @@ public class DemoWallSegmentation : MonoBehaviour
                 // Проверяем границы экрана
                 if (x >= 0 && x < segmentationTexture.width && y >= 0 && y < segmentationTexture.height)
                 {
-                    segmentationTexture.SetPixel(x, y, wallColor);
+                    segmentationTexture.SetPixel(x, y, currentWallColor);
                     
                     // Увеличиваем область закрашивания для лучшей видимости
-                    int brushSize = 8; // Увеличенный размер кисти
-                    for (int dx = -brushSize; dx <= brushSize; dx++)
+                    for (int dx = -fullscreenBrushSize; dx <= fullscreenBrushSize; dx++)
                     {
-                        for (int dy = -brushSize; dy <= brushSize; dy++)
+                        for (int dy = -fullscreenBrushSize; dy <= fullscreenBrushSize; dy++)
                         {
                             // Рассчитываем расстояние от центра
                             float distance = Mathf.Sqrt(dx * dx + dy * dy);
-                            if (distance <= brushSize)
+                            if (distance <= fullscreenBrushSize)
                             {
                                 int nx = x + dx;
                                 int ny = y + dy;
                                 if (nx >= 0 && nx < segmentationTexture.width && ny >= 0 && ny < segmentationTexture.height)
                                 {
                                     // Применяем цвет с затуханием от центра
-                                    float alpha = 1.0f - (distance / brushSize);
-                                    Color pixelColor = distance < brushSize/2 ? wallColor : edgeColor;
-                                    pixelColor.a *= alpha * 0.7f;
+                                    float alpha = 1.0f - (distance / fullscreenBrushSize);
+                                    Color pixelColor = distance < fullscreenBrushSize/2 ? currentWallColor : edgeColor;
+                                    
+                                    // Задаем прозрачность в зависимости от режима
+                                    float modeAlpha = 0.6f;
+                                    pixelColor.a *= alpha * modeAlpha;
                                     
                                     // Комбинируем с текущим цветом для сглаживания
                                     Color currentColor = segmentationTexture.GetPixel(nx, ny);
@@ -322,25 +346,44 @@ public class DemoWallSegmentation : MonoBehaviour
         int sy = y0 < y1 ? 1 : -1;
         int err = dx - dy;
         
+        // Увеличиваем толщину линии в полноэкранном режиме
+        int lineThickness = 3;
+        float lineOpacity = 0.8f;
+        
         while (true)
         {
             // Проверяем границы текстуры
             if (x0 >= 0 && x0 < segmentationTexture.width && y0 >= 0 && y0 < segmentationTexture.height)
             {
-                segmentationTexture.SetPixel(x0, y0, color);
+                // Создаем немного более яркий цвет для линий, чтобы они выделялись
+                Color lineColor = new Color(color.r * 1.2f, color.g * 1.2f, color.b * 1.2f, color.a * lineOpacity);
+                segmentationTexture.SetPixel(x0, y0, lineColor);
                 
                 // Делаем линию толще для лучшей видимости
-                for (int i = -2; i <= 2; i++)
+                for (int i = -lineThickness; i <= lineThickness; i++)
                 {
-                    for (int j = -2; j <= 2; j++)
+                    for (int j = -lineThickness; j <= lineThickness; j++)
                     {
-                        int nx = x0 + i;
-                        int ny = y0 + j;
-                        if (nx >= 0 && nx < segmentationTexture.width && ny >= 0 && ny < segmentationTexture.height)
+                        // Проверяем расстояние от центра для создания более округлой линии
+                        float dist = Mathf.Sqrt(i*i + j*j);
+                        if (dist <= lineThickness)
                         {
-                            Color fadeColor = color;
-                            fadeColor.a *= 0.7f;
-                            segmentationTexture.SetPixel(nx, ny, fadeColor);
+                            int nx = x0 + i;
+                            int ny = y0 + j;
+                            if (nx >= 0 && nx < segmentationTexture.width && ny >= 0 && ny < segmentationTexture.height)
+                            {
+                                // Уменьшаем непрозрачность по мере удаления от центра
+                                float fadeAlpha = 0.7f * (1.0f - dist / lineThickness);
+                                Color fadeColor = lineColor;
+                                fadeColor.a *= fadeAlpha;
+                                
+                                // Проверяем текущий цвет и комбинируем с ним
+                                Color currentColor = segmentationTexture.GetPixel(nx, ny);
+                                if (currentColor.a < fadeColor.a)
+                                {
+                                    segmentationTexture.SetPixel(nx, ny, fadeColor);
+                                }
+                            }
                         }
                     }
                 }
@@ -461,6 +504,34 @@ public class DemoWallSegmentation : MonoBehaviour
         {
             Debug.LogError($"DemoWallSegmentation: Ошибка при создании запасного меша: {ex.Message}");
             return null;
+        }
+    }
+    
+    // Метод для обновления размера debugImage
+    private void UpdateDebugImageSize()
+    {
+        if (debugImageRectTransform != null)
+        {
+            // Растягиваем изображение на весь экран
+            debugImageRectTransform.anchorMin = Vector2.zero;
+            debugImageRectTransform.anchorMax = Vector2.one;
+            debugImageRectTransform.offsetMin = Vector2.zero;
+            debugImageRectTransform.offsetMax = Vector2.zero;
+        }
+    }
+    
+    // Метод для обновления внешнего вида debugImage
+    private void UpdateDebugImageAppearance()
+    {
+        // Обновляем размер
+        UpdateDebugImageSize();
+        
+        // Обновляем прозрачность
+        if (debugImage != null)
+        {
+            Color imageColor = debugImage.color;
+            imageColor.a = fullscreenAlpha;
+            debugImage.color = imageColor;
         }
     }
 } 

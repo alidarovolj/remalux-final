@@ -76,16 +76,22 @@ public class WallSegmentation : MonoBehaviour
     // Инициализация
     private void Start()
     {
-        // Определяем первоначальный режим
-        if (currentMode == SegmentationMode.Demo)
-        {
-            useDemoMode = true;
-        }
+        Debug.Log("WallSegmentation: Инициализация системы сегментации стен...");
         
-        // Проверяем наличие ARCameraManager для получения изображения с камеры
+        // Инициализация начальных настроек
+        useDemoMode = (currentMode == SegmentationMode.Demo) || forceDemoMode;
+        
+        // Устанавливаем более точное смещение от поверхности для стен
+        SetWallSurfaceOffset(-0.005f);
+        
+        // Находим и настраиваем компоненты
         if (cameraManager == null)
         {
             cameraManager = FindObjectOfType<ARCameraManager>();
+            if (cameraManager == null)
+            {
+                Debug.LogError("WallSegmentation: ARCameraManager не найден в сцене. Сегментация не будет работать.");
+            }
         }
         
         if (cameraManager != null)
@@ -116,6 +122,9 @@ public class WallSegmentation : MonoBehaviour
 
         // Ждем инициализации AR-сессии перед загрузкой модели
         StartCoroutine(WaitForARSessionTracking());
+        
+        // Запускаем генерацию полных моделей стен через 3 секунды
+        StartCoroutine(DelayedGenerateWallModels(3.0f));
     }
 
     /// <summary>
@@ -806,9 +815,59 @@ public class WallSegmentation : MonoBehaviour
     // Обновляет статус всех AR плоскостей на основе результатов сегментации
     public int UpdatePlanesSegmentationStatus()
     {
-        Debug.Log("Обновление статуса сегментации плоскостей");
-        // Заглушка, возвращает количество обновленных плоскостей
-        return 0;
+        if (enableDebugLogs)
+        {
+            Debug.Log("WallSegmentation: Обновление статуса сегментации плоскостей");
+        }
+        
+        // Находим ARPlaneController
+        ARPlaneController planeController = FindObjectOfType<ARPlaneController>();
+        if (planeController == null)
+        {
+            Debug.LogWarning("WallSegmentation: ARPlaneController не найден");
+            return 0;
+        }
+        
+        // Находим ARPlaneManager
+        ARPlaneManager planeManager = FindObjectOfType<ARPlaneManager>();
+        if (planeManager == null)
+        {
+            Debug.LogWarning("WallSegmentation: ARPlaneManager не найден");
+            return 0;
+        }
+        
+        int activatedPlanes = 0;
+        
+        // Перебираем все плоскости
+        foreach (var plane in planeManager.trackables)
+        {
+            // Для вертикальных плоскостей (стен)
+            if (plane.alignment == UnityEngine.XR.ARSubsystems.PlaneAlignment.Vertical)
+            {
+                // Получаем компонент визуализации
+                ARPlaneVisualizer visualizer = plane.GetComponentInChildren<ARPlaneVisualizer>();
+                if (visualizer != null)
+                {
+                    // Активируем плоскость для визуализации
+                    visualizer.SetAsSegmentationPlane(true);
+                    
+                    // Включаем расширение стены
+                    visualizer.SetExtendWalls(true);
+                    
+                    // Обновляем визуализацию
+                    visualizer.UpdateVisual();
+                    
+                    activatedPlanes++;
+                }
+            }
+        }
+        
+        if (enableDebugLogs)
+        {
+            Debug.Log($"WallSegmentation: Активировано {activatedPlanes} вертикальных плоскостей (стен)");
+        }
+        
+        return activatedPlanes;
     }
     
     // Получает текстуру сегментации
@@ -847,5 +906,113 @@ public class WallSegmentation : MonoBehaviour
     public bool IsDebugVisualizationEnabled()
     {
         return showDebugVisualisation;
+    }
+
+    /// <summary>
+    /// Устанавливает смещение от поверхности для всех визуализаторов AR-плоскостей
+    /// </summary>
+    /// <param name="offset">Смещение в метрах (отрицательное значение - ближе к поверхности)</param>
+    public void SetWallSurfaceOffset(float offset)
+    {
+        // Находим ARPlaneController
+        ARPlaneController planeController = FindObjectOfType<ARPlaneController>();
+        if (planeController != null)
+        {
+            // Устанавливаем смещение для всех плоскостей
+            planeController.SetOffsetFromSurfaceForAll(offset);
+            
+            if (enableDebugLogs)
+            {
+                Debug.Log($"WallSegmentation: Установлено смещение от поверхности стен: {offset}м");
+            }
+        }
+        else
+        {
+            Debug.LogWarning("WallSegmentation: ARPlaneController не найден, невозможно установить смещение от поверхности");
+        }
+    }
+
+    /// <summary>
+    /// Проверяет положение всех плоскостей и выводит детальный отчет в лог
+    /// </summary>
+    /// <returns>Отчет о положении плоскостей стен</returns>
+    public string CheckWallPlanePositions()
+    {
+        // Находим ARPlaneController для проверки всех плоскостей
+        ARPlaneController planeController = FindObjectOfType<ARPlaneController>();
+        if (planeController != null)
+        {
+            // Вызываем проверку всех плоскостей
+            string report = planeController.CheckAllPlanePositions();
+            
+            if (enableDebugLogs)
+            {
+                Debug.Log($"WallSegmentation: Завершена проверка положения плоскостей стен");
+            }
+            
+            return report;
+        }
+        else
+        {
+            string error = "WallSegmentation: ARPlaneController не найден, невозможно проверить положение плоскостей";
+            Debug.LogWarning(error);
+            return error;
+        }
+    }
+
+    /// <summary>
+    /// Генерирует полные модели стен на основе обнаруженных AR-плоскостей
+    /// </summary>
+    public void GenerateFullWallModels()
+    {
+        // Находим ARPlaneController
+        ARPlaneController planeController = FindObjectOfType<ARPlaneController>();
+        if (planeController != null)
+        {
+            // Генерируем полные модели стен
+            planeController.GenerateFullWallModels();
+            
+            if (enableDebugLogs)
+            {
+                Debug.Log("WallSegmentation: Запрошена генерация полных моделей стен");
+            }
+        }
+        else
+        {
+            Debug.LogWarning("WallSegmentation: ARPlaneController не найден, невозможно сгенерировать полные модели стен");
+        }
+    }
+
+    /// <summary>
+    /// Генерирует полные модели стен с задержкой
+    /// </summary>
+    private IEnumerator DelayedGenerateWallModels(float delay)
+    {
+        yield return new WaitForSeconds(delay);
+        
+        // Генерируем полные модели стен
+        GenerateFullWallModels();
+        
+        // Повторно генерируем через 1 секунду для надежности
+        yield return new WaitForSeconds(1.0f);
+        GenerateFullWallModels();
+    }
+
+    /// <summary>
+    /// Обрабатывает новые AR-плоскости и активирует их для визуализации
+    /// </summary>
+    /// <param name="planeCount">Количество новых плоскостей</param>
+    public void HandleNewARPlanes(int planeCount)
+    {
+        if (enableDebugLogs)
+        {
+            Debug.Log($"WallSegmentation: Обработка {planeCount} новых AR-плоскостей");
+        }
+        
+        // Запускаем обновление сегментации
+        UpdatePlanesSegmentationStatus();
+        
+        // Генерируем полные модели стен с небольшой задержкой
+        StartCoroutine(DelayedGenerateWallModels(0.5f));
     }
 } 

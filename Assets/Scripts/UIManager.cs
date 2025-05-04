@@ -13,6 +13,7 @@ public class UIManager : MonoBehaviour
     [Header("References")]
     [SerializeField] private WallPainter wallPainter;
     [SerializeField] private WallSegmentation wallSegmentation;
+    [SerializeField] private DemoWallSegmentation demoWallSegmentation; // Добавляем ссылку на DemoWallSegmentation
     
     [Header("UI Elements")]
     [SerializeField] private GameObject colorPalette;
@@ -57,6 +58,15 @@ public class UIManager : MonoBehaviour
     [SerializeField] private Color yellowColor = new Color(1f, 0.9f, 0f, 0.8f);
     [SerializeField] private Color whiteColor = new Color(1f, 1f, 1f, 0.8f);
     
+    [Header("AR Wall Positioning Settings")]
+    [SerializeField] private Slider wallOffsetSlider; // Слайдер для настройки смещения стен
+    [SerializeField] private Text wallOffsetValueText; // Текст для отображения текущего значения смещения
+    [SerializeField] private float minOffset = -0.02f; // Минимальное смещение (-2 см)
+    [SerializeField] private float maxOffset = 0.02f; // Максимальное смещение (2 см)
+    
+    [Header("Wall Visualization Controls")]
+    [SerializeField] private Button generateWallModelsButton; // Кнопка для генерации полных моделей стен
+    
     // Предопределенная палитра цветов
     private Color[] predefinedColors = new Color[]
     {
@@ -82,6 +92,9 @@ public class UIManager : MonoBehaviour
             
         if (wallSegmentation == null)
             wallSegmentation = FindObjectOfType<WallSegmentation>();
+            
+        if (demoWallSegmentation == null)
+            demoWallSegmentation = FindObjectOfType<DemoWallSegmentation>();
             
         // Настраиваем кнопки выбора цвета
         SetupColorButtons();
@@ -130,6 +143,10 @@ public class UIManager : MonoBehaviour
             
         if (whiteButton != null)
             whiteButton.onClick.AddListener(() => SetPaintColor(whiteColor));
+            
+        // Настраиваем кнопку генерации стен
+        if (generateWallModelsButton != null)
+            generateWallModelsButton.onClick.AddListener(OnGenerateWallModelsClicked);
     }
     
     private void SetupSliders()
@@ -150,6 +167,21 @@ public class UIManager : MonoBehaviour
             
             // Добавляем обработчик изменения
             intensitySlider.onValueChanged.AddListener(OnIntensityChanged);
+        }
+        
+        // Настройка слайдера позиционирования стен
+        if (wallOffsetSlider != null)
+        {
+            // Настраиваем начальное значение
+            wallOffsetSlider.minValue = minOffset;
+            wallOffsetSlider.maxValue = maxOffset;
+            wallOffsetSlider.value = -0.005f; // Значение по умолчанию -5 мм
+            
+            // Добавляем обработчик изменения
+            wallOffsetSlider.onValueChanged.AddListener(OnWallOffsetChanged);
+            
+            // Обновляем текст при инициализации
+            UpdateWallOffsetValueText(wallOffsetSlider.value);
         }
     }
     
@@ -225,6 +257,18 @@ public class UIManager : MonoBehaviour
         {
             wallSegmentation.EnableDebugVisualization(isOn);
             Debug.Log($"Отладочная визуализация: {(isOn ? "Включена" : "Выключена")}");
+        }
+        
+        // Также включаем/выключаем отображение в DemoWallSegmentation
+        if (demoWallSegmentation != null)
+        {
+            // Устанавливаем значение в поле showDebugVisualization
+            var field = typeof(DemoWallSegmentation).GetField("showDebugVisualization", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            if (field != null)
+            {
+                field.SetValue(demoWallSegmentation, isOn);
+                Debug.Log($"Отладочная визуализация DemoWallSegmentation: {(isOn ? "Включена" : "Выключена")}");
+            }
         }
     }
     
@@ -444,6 +488,50 @@ public class UIManager : MonoBehaviour
         if (wallPainter != null)
         {
             wallPainter.OnSnapshotsChanged -= OnSnapshotsChanged;
+        }
+    }
+    
+    /// <summary>
+    /// Обработчик изменения смещения стен
+    /// </summary>
+    /// <param name="offset">Смещение стен в метрах</param>
+    private void OnWallOffsetChanged(float offset)
+    {
+        // Обновляем смещение стен
+        if (wallSegmentation != null)
+        {
+            wallSegmentation.SetWallSurfaceOffset(offset);
+            
+            // Обновляем текст с текущим значением
+            UpdateWallOffsetValueText(offset);
+            
+            Debug.Log($"Установлено смещение стен: {offset:F4} м");
+        }
+    }
+    
+    /// <summary>
+    /// Обновляет текст с текущим значением смещения стен
+    /// </summary>
+    private void UpdateWallOffsetValueText(float offset)
+    {
+        if (wallOffsetValueText != null)
+        {
+            // Отображаем значение в миллиметрах с нужным знаком
+            float offsetMm = offset * 1000f; // Перевод из метров в миллиметры
+            string sign = offsetMm >= 0 ? "+" : "";
+            wallOffsetValueText.text = $"{sign}{offsetMm:F1} мм";
+        }
+    }
+    
+    /// <summary>
+    /// Обработчик нажатия на кнопку генерации полных моделей стен
+    /// </summary>
+    private void OnGenerateWallModelsClicked()
+    {
+        if (wallSegmentation != null)
+        {
+            wallSegmentation.GenerateFullWallModels();
+            Debug.Log("UIManager: Запущена генерация полных моделей стен");
         }
     }
 } 

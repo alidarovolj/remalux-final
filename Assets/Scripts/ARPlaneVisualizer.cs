@@ -12,15 +12,15 @@ public class ARPlaneVisualizer : MonoBehaviour
     [SerializeField] private Material horizontalPlaneMaterial; // Материал для горизонтальных плоскостей (пол/потолок)
     
     [Header("Цвета")]
-    [SerializeField] private Color wallColor = new Color(0.7f, 0.4f, 0.2f, 0.7f); // Коричневый полупрозрачный
-    [SerializeField] private Color floorColor = new Color(0.2f, 0.2f, 0.8f, 0.7f); // Синий полупрозрачный
-    [SerializeField] private Color ceilingColor = new Color(0.2f, 0.7f, 0.2f, 0.7f); // Зеленый полупрозрачный
+    [SerializeField] private Color wallColor = new Color(0.7f, 0.4f, 0.2f, 0.4f); // Коричневый полупрозрачный (уменьшена прозрачность)
+    [SerializeField] private Color floorColor = new Color(0.2f, 0.2f, 0.8f, 0.5f); // Синий полупрозрачный
+    [SerializeField] private Color ceilingColor = new Color(0.2f, 0.7f, 0.2f, 0.5f); // Зеленый полупрозрачный
     
     [Header("Настройки визуализации")]
     [SerializeField] private bool useExactPlacement = true; // Использовать точное размещение на плоскости
     [SerializeField] private bool extendWalls = false; // Расширять стены для лучшей визуализации
     [SerializeField] private float minWallHeight = 2.0f; // Минимальная высота стены при расширении
-    [SerializeField] private float offsetFromSurface = 0.005f; // Смещение от поверхности (5 мм)
+    [SerializeField] private float offsetFromSurface = -0.005f; // Смещение от поверхности (-5 мм) - отрицательное для позиционирования ближе к поверхности
     [SerializeField] private bool debugPositioning = false; // Включить отладку позиционирования
     
     // Новый параметр для определения, является ли это плоскостью сегментации
@@ -39,8 +39,7 @@ public class ARPlaneVisualizer : MonoBehaviour
         {
             // Используем shader, который поддерживает прозрачность
             verticalPlaneMaterial = new Material(Shader.Find("Transparent/Diffuse"));
-            verticalPlaneMaterial.color = new Color(0.0f, 0.2f, 1.0f, 0.0f); // Полностью прозрачный
-            wallColor = verticalPlaneMaterial.color; // Синхронизируем цвет
+            verticalPlaneMaterial.color = wallColor; // Используем коричневый цвет по умолчанию
         }
         
         if (horizontalPlaneMaterial == null)
@@ -52,7 +51,8 @@ public class ARPlaneVisualizer : MonoBehaviour
         // Настраиваем материал для правильного отображения
         if (meshRenderer != null && meshRenderer.material != null)
         {
-            meshRenderer.material.SetFloat("_Mode", 2); // Transparent mode
+            // Настраиваем материал для прозрачности
+            meshRenderer.material.SetFloat("_Mode", 3); // Fade mode (более качественная прозрачность)
             meshRenderer.material.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
             meshRenderer.material.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
             meshRenderer.material.SetInt("_ZWrite", 0);
@@ -60,6 +60,10 @@ public class ARPlaneVisualizer : MonoBehaviour
             meshRenderer.material.EnableKeyword("_ALPHABLEND_ON");
             meshRenderer.material.DisableKeyword("_ALPHAPREMULTIPLY_ON");
             meshRenderer.material.renderQueue = 3000;
+            
+            // Настраиваем дополнительные параметры материала для лучшего отображения
+            meshRenderer.material.SetFloat("_Glossiness", 0.0f); // Матовая поверхность
+            meshRenderer.material.SetFloat("_Metallic", 0.0f); // Не металлическая поверхность
             
             // По умолчанию делаем плоскости полностью прозрачными
             if (!isSegmentationPlane)
@@ -108,10 +112,22 @@ public class ARPlaneVisualizer : MonoBehaviour
             {
                 meshRenderer.material = verticalPlaneMaterial;
             }
-            meshRenderer.material.color = wallColor;
+            
+            // Используем более интенсивный цвет для стен
+            Color enhancedWallColor = new Color(
+                wallColor.r, 
+                wallColor.g, 
+                wallColor.b, 
+                0.4f); // Устанавливаем прозрачность в 40%
+                
+            meshRenderer.material.color = enhancedWallColor;
             
             // Корректируем размер и позицию для лучшего представления стены
             AdjustWallVisualization();
+            
+            // Настраиваем дополнительные параметры рендеринга для стен
+            meshRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            meshRenderer.receiveShadows = false;
         }
         else if (arPlane.alignment == PlaneAlignment.HorizontalUp)
         {
@@ -166,17 +182,26 @@ public class ARPlaneVisualizer : MonoBehaviour
                               (arPlane.alignment == PlaneAlignment.NotAxisAligned && 
                                Vector3.Angle(normal, Vector3.up) > 60f);
         
-        // 4. Определяем размеры для визуализации
+        // 4. Определяем размеры для визуализации - УВЕЛИЧИВАЕМ РАЗМЕРЫ ДЛЯ ПОЛНОГО ПОКРЫТИЯ СТЕН
+        float wallWidth = width;
         float wallHeight = height;
-        if (extendWalls && isVerticalPlane)
+        
+        // Для вертикальных плоскостей (стен) всегда увеличиваем размеры для лучшего визуального представления
+        if (isVerticalPlane)
         {
-            wallHeight = Mathf.Max(height, minWallHeight);
+            // Минимальная высота стены - 2.5 метра по умолчанию
+            float defaultMinWallHeight = 2.5f;
+            
+            // Минимальная ширина стены - 3 метра или текущая ширина * 1.5, что больше
+            float minWidth = Mathf.Max(3.0f, width * 1.5f);
+            
+            // Расширяем стены для полного покрытия
+            wallWidth = Mathf.Max(width, minWidth);
+            wallHeight = Mathf.Max(height, extendWalls ? minWallHeight : defaultMinWallHeight);
         }
         
-        // 5. КАРДИНАЛЬНО НОВЫЙ ПОДХОД К ВЫЧИСЛЕНИЮ ОРИЕНТАЦИИ
-        
-        // Устанавливаем масштаб
-        transform.localScale = new Vector3(width, wallHeight, 0.01f); // Толщина стены 1 см
+        // 5. Устанавливаем масштаб с новыми размерами
+        transform.localScale = new Vector3(wallWidth, wallHeight, 0.01f); // Толщина стены 1 см
         
         // Прежде всего, убедимся, что нормаль вектор не равен нулю
         if (normal.magnitude < 0.001f)
@@ -214,6 +239,31 @@ public class ARPlaneVisualizer : MonoBehaviour
             
             // Устанавливаем вращение
             transform.rotation = rotationMatrix;
+            
+            // Получаем исходное положение от родительского объекта ARPlane
+            Vector3 position = arPlane.transform.TransformPoint(center);
+            
+            // Применяем смещение в направлении нормали
+            if (offsetFromSurface != 0)
+            {
+                // Используем точную горизонтальную нормаль для смещения визуализации
+                position += horizontalNormal * offsetFromSurface;
+                
+                if (debugPositioning)
+                {
+                    Debug.Log($"ARPlane: {arPlane.trackableId} - Применено смещение от поверхности: {offsetFromSurface}м в направлении нормали");
+                }
+            }
+            
+            // Если это стена, смещаем вниз на половину высоты стены, чтобы низ стены был на уровне пола
+            if (isVerticalPlane && wallHeight > height)
+            {
+                float heightDifference = wallHeight - height;
+                position.y -= heightDifference * 0.4f; // Смещаем немного вниз, чтобы стена начиналась от пола
+            }
+            
+            // Устанавливаем позицию с учетом корректного смещения
+            transform.position = position;
         }
         else
         {
@@ -249,25 +299,23 @@ public class ARPlaneVisualizer : MonoBehaviour
             
             // Устанавливаем вращение
             transform.rotation = rotationMatrix;
-        }
-        
-        // 6. Устанавливаем позицию
-        Vector3 visualPosition = center;
-        
-        // Корректируем позицию с учетом увеличенной высоты
-        if (extendWalls && isVerticalPlane && height < wallHeight)
-        {
-            float heightDifference = wallHeight - height;
-            // Поднимаем центр плоскости на половину разницы в высоте
-            visualPosition += transform.up * (heightDifference * 0.5f);
-        }
-        
-        transform.position = visualPosition;
-        
-        // 7. Применяем смещение от поверхности для избежания z-fighting
-        if (!useExactPlacement)
-        {
-            transform.position += normal * offsetFromSurface;
+            
+            // Получаем исходное положение от родительского объекта ARPlane
+            Vector3 position = arPlane.transform.TransformPoint(center);
+            
+            // Применяем смещение в направлении нормали
+            if (offsetFromSurface != 0)
+            {
+                position += normal * offsetFromSurface;
+                
+                if (debugPositioning)
+                {
+                    Debug.Log($"ARPlane: {arPlane.trackableId} - Применено смещение от поверхности: {offsetFromSurface}м в направлении нормали");
+                }
+            }
+            
+            // Устанавливаем позицию
+            transform.position = position;
         }
         
         // 8. Отладка
@@ -275,6 +323,7 @@ public class ARPlaneVisualizer : MonoBehaviour
         {
             Debug.Log($"ARPlane: {arPlane.trackableId} - Вращение применено: position={transform.position}, rotation={transform.rotation.eulerAngles}");
             Debug.Log($"ARPlane: {arPlane.trackableId} - Локальные оси: forward={transform.forward}, up={transform.up}, right={transform.right}");
+            Debug.Log($"ARPlane: {arPlane.trackableId} - Размеры плоскости: исходные={width}x{height}, после корректировки={wallWidth}x{wallHeight}");
             
             // Визуализируем векторы
             Debug.DrawRay(transform.position, normal * 0.5f, Color.blue, 0.5f);
@@ -283,17 +332,17 @@ public class ARPlaneVisualizer : MonoBehaviour
             Debug.DrawRay(transform.position, transform.right * 0.5f, Color.yellow, 0.5f);
             
             // Визуализируем углы плоскости
-            Debug.DrawLine(transform.position + transform.up * wallHeight/2 + transform.right * width/2, 
-                          transform.position + transform.up * wallHeight/2 - transform.right * width/2, 
+            Debug.DrawLine(transform.position + transform.up * wallHeight/2 + transform.right * wallWidth/2, 
+                          transform.position + transform.up * wallHeight/2 - transform.right * wallWidth/2, 
                           Color.magenta, 0.5f);
-            Debug.DrawLine(transform.position - transform.up * wallHeight/2 + transform.right * width/2, 
-                          transform.position - transform.up * wallHeight/2 - transform.right * width/2, 
+            Debug.DrawLine(transform.position - transform.up * wallHeight/2 + transform.right * wallWidth/2, 
+                          transform.position - transform.up * wallHeight/2 - transform.right * wallWidth/2, 
                           Color.magenta, 0.5f);
-            Debug.DrawLine(transform.position + transform.up * wallHeight/2 + transform.right * width/2, 
-                          transform.position - transform.up * wallHeight/2 + transform.right * width/2, 
+            Debug.DrawLine(transform.position + transform.up * wallHeight/2 + transform.right * wallWidth/2, 
+                          transform.position - transform.up * wallHeight/2 + transform.right * wallWidth/2, 
                           Color.magenta, 0.5f);
-            Debug.DrawLine(transform.position + transform.up * wallHeight/2 - transform.right * width/2, 
-                          transform.position - transform.up * wallHeight/2 - transform.right * width/2, 
+            Debug.DrawLine(transform.position + transform.up * wallHeight/2 - transform.right * wallWidth/2, 
+                          transform.position - transform.up * wallHeight/2 - transform.right * wallWidth/2, 
                           Color.magenta, 0.5f);
         }
     }
@@ -371,5 +420,74 @@ public class ARPlaneVisualizer : MonoBehaviour
     {
         extendWalls = extend;
         UpdateVisual();
+    }
+    
+    /// <summary>
+    /// Устанавливает смещение от поверхности для визуализации
+    /// </summary>
+    /// <param name="offset">Смещение в метрах (отрицательное значение - ближе к поверхности)</param>
+    public void SetOffsetFromSurface(float offset)
+    {
+        offsetFromSurface = offset;
+        UpdateVisual();
+        
+        if (debugPositioning)
+        {
+            Debug.Log($"ARPlaneVisualizer: Установлено новое смещение от поверхности: {offsetFromSurface}м");
+        }
+    }
+    
+    /// <summary>
+    /// Возвращает текущее смещение от поверхности
+    /// </summary>
+    public float GetOffsetFromSurface()
+    {
+        return offsetFromSurface;
+    }
+    
+    /// <summary>
+    /// Проверяет и корректирует положение плоскости относительно реальной стены
+    /// </summary>
+    /// <returns>Информацию о проверке положения</returns>
+    public string CheckPlanePosition()
+    {
+        if (arPlane == null) return "Плоскость не найдена";
+        
+        // Получаем позицию и нормаль
+        Vector3 center = arPlane.center;
+        Vector3 normal = arPlane.normal.normalized;
+        Vector3 position = arPlane.transform.TransformPoint(center);
+        
+        // Проверяем, является ли плоскость вертикальной
+        bool isVerticalPlane = arPlane.alignment == PlaneAlignment.Vertical || 
+                              (arPlane.alignment == PlaneAlignment.NotAxisAligned && 
+                               Vector3.Angle(normal, Vector3.up) > 60f);
+                               
+        // Получаем угол отклонения от вертикали для вертикальных плоскостей
+        float verticalDeviation = 0;
+        if (isVerticalPlane)
+        {
+            // Угол между нормалью и горизонтальной плоскостью
+            Vector3 horizontalNormal = new Vector3(normal.x, 0, normal.z).normalized;
+            verticalDeviation = Vector3.Angle(normal, horizontalNormal);
+            
+            // Корректируем знак в зависимости от направления отклонения
+            if (normal.y < 0) verticalDeviation = -verticalDeviation;
+        }
+        
+        // Формируем отчет
+        string report = $"Плоскость {arPlane.trackableId}:\n" +
+                       $"- Тип: {(isVerticalPlane ? "Вертикальная (стена)" : "Не вертикальная")}\n" +
+                       $"- Положение: {position}\n" +
+                       $"- Нормаль: {normal}\n" +
+                       $"- Отклонение от вертикали: {verticalDeviation:F1}°\n" +
+                       $"- Смещение от поверхности: {offsetFromSurface*1000:F1} мм";
+                       
+        if (debugPositioning)
+        {
+            Debug.Log(report);
+        }
+        
+        return report;
     }
 } 
