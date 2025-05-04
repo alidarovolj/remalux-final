@@ -132,3 +132,4 @@ MonoBehaviour:
   minWallHeight: 2
   offsetFromSurface: 0.005
   debugPositioning: 0
+  isSegmentationPlane: 0

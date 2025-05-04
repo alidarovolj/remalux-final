@@ -23,6 +23,9 @@ public class ARPlaneVisualizer : MonoBehaviour
     [SerializeField] private float offsetFromSurface = 0.005f; // Смещение от поверхности (5 мм)
     [SerializeField] private bool debugPositioning = false; // Включить отладку позиционирования
     
+    // Новый параметр для определения, является ли это плоскостью сегментации
+    [SerializeField] private bool isSegmentationPlane = false;
+    
     private ARPlane arPlane;
     private MeshRenderer meshRenderer;
     
@@ -36,14 +39,14 @@ public class ARPlaneVisualizer : MonoBehaviour
         {
             // Используем shader, который поддерживает прозрачность
             verticalPlaneMaterial = new Material(Shader.Find("Transparent/Diffuse"));
-            verticalPlaneMaterial.color = new Color(0.0f, 0.2f, 1.0f, 0.7f); // Ярко-синий полупрозрачный
+            verticalPlaneMaterial.color = new Color(0.0f, 0.2f, 1.0f, 0.0f); // Полностью прозрачный
             wallColor = verticalPlaneMaterial.color; // Синхронизируем цвет
         }
         
         if (horizontalPlaneMaterial == null)
         {
             horizontalPlaneMaterial = new Material(Shader.Find("Transparent/Diffuse"));
-            horizontalPlaneMaterial.color = floorColor;
+            horizontalPlaneMaterial.color = new Color(floorColor.r, floorColor.g, floorColor.b, 0.0f); // Полностью прозрачный
         }
         
         // Настраиваем материал для правильного отображения
@@ -57,6 +60,13 @@ public class ARPlaneVisualizer : MonoBehaviour
             meshRenderer.material.EnableKeyword("_ALPHABLEND_ON");
             meshRenderer.material.DisableKeyword("_ALPHAPREMULTIPLY_ON");
             meshRenderer.material.renderQueue = 3000;
+            
+            // По умолчанию делаем плоскости полностью прозрачными
+            if (!isSegmentationPlane)
+            {
+                Color currentColor = meshRenderer.material.color;
+                meshRenderer.material.color = new Color(currentColor.r, currentColor.g, currentColor.b, 0.0f);
+            }
         }
     }
     
@@ -81,6 +91,15 @@ public class ARPlaneVisualizer : MonoBehaviour
     {
         if (arPlane == null || meshRenderer == null) return;
         
+        // Если это не плоскость сегментации, делаем её полностью прозрачной
+        if (!isSegmentationPlane)
+        {
+            Color currentColor = meshRenderer.material.color;
+            meshRenderer.material.color = new Color(currentColor.r, currentColor.g, currentColor.b, 0.0f);
+            return;
+        }
+        
+        // Только для плоскостей сегментации продолжаем обычную визуализацию
         // Определяем тип плоскости и назначаем соответствующий материал и цвет
         if (arPlane.alignment == PlaneAlignment.Vertical)
         {
@@ -218,5 +237,14 @@ public class ARPlaneVisualizer : MonoBehaviour
         }
         
         Debug.Log("Обновлены все визуализаторы AR-плоскостей");
+    }
+    
+    /// <summary>
+    /// Устанавливает, является ли эта плоскость плоскостью сегментации
+    /// </summary>
+    public void SetAsSegmentationPlane(bool isSegmentation)
+    {
+        isSegmentationPlane = isSegmentation;
+        UpdateVisual();
     }
 } 

@@ -1,12 +1,38 @@
+using System;
+using System.IO;
 using System.Collections;
 using System.Collections.Generic;
-using System.IO;
+using System.Linq;
 using UnityEngine;
+using Unity.Barracuda;
+using Unity.Barracuda.ONNX;
+using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 using UnityEngine.XR.ARFoundation;
 using UnityEngine.UI;
-using Unity.Barracuda;
-using System.Linq;
 using Unity.XR.CoreUtils;
+
+/// <summary>
+/// Класс для хранения данных о стене, обнаруженной через сегментацию
+/// </summary>
+[Serializable]
+public class WallData
+{
+    public int id;
+    public Vector3 position;
+    public Quaternion rotation;
+    public float width;
+    public float height;
+}
+
+/// <summary>
+/// Класс для передачи результатов сегментации стен
+/// </summary>
+[Serializable]
+public class WallPrediction
+{
+    public List<WallData> walls = new List<WallData>();
+}
 
 /// <summary>
 /// Компонент для сегментации стен с использованием нейросети
@@ -46,6 +72,9 @@ public class WallSegmentation : MonoBehaviour
     [SerializeField] private RawImage debugImage;
     [SerializeField] private float processingInterval = 0.3f;
     
+    [Header("Wall Visualization")]
+    [SerializeField] private Material wallMaterial; // Материал для стен
+    
     // Приватные переменные
     private Texture2D cameraTexture;
     private Texture2D segmentationTexture;
@@ -56,6 +85,8 @@ public class WallSegmentation : MonoBehaviour
     private bool useDemoMode = false; // Используем демо-режим при ошибке модели
     private int errorCount = 0; // Счетчик ошибок нейросети
     private NNModel currentModelAsset; // Текущая используемая модель
+    private List<GameObject> currentWalls = new List<GameObject>(); // Список текущих стен
+    private List<GameObject> demoWalls = new List<GameObject>(); // Список демо-стен
     
     // Инициализация
     private void Start()
@@ -101,6 +132,41 @@ public class WallSegmentation : MonoBehaviour
         StartCoroutine(ProcessFrames());
     }
     
+    // Дополнительный метод для импорта ONNX модели
+    private bool ImportONNXModel(string filePath)
+    {
+        if (!File.Exists(filePath))
+        {
+            Debug.LogWarning($"ONNX модель не найдена по пути: {filePath}");
+            return false;
+        }
+
+        try
+        {
+            Debug.Log($"Импорт ONNX модели из: {filePath}");
+            
+            // Считываем ONNX файл в байты
+            byte[] onnxBytes = File.ReadAllBytes(filePath);
+            
+            // Используем конвертер ONNX для преобразования в модель Barracuda
+            Unity.Barracuda.ONNX.ONNXModelConverter converter = 
+                new Unity.Barracuda.ONNX.ONNXModelConverter(
+                    optimizeModel: true, 
+                    treatErrorsAsWarnings: false, 
+                    forceArbitraryBatchSize: true);
+            
+            model = converter.Convert(onnxBytes);
+            
+            Debug.Log("ONNX модель успешно импортирована и конвертирована в формат Barracuda");
+            return true;
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"Ошибка импорта ONNX модели: {e.Message}\n{e.StackTrace}");
+            return false;
+        }
+    }
+
     // Загрузка модели в зависимости от выбранного режима
     private void LoadSelectedModel()
     {
@@ -133,27 +199,13 @@ public class WallSegmentation : MonoBehaviour
         else if (currentMode == SegmentationMode.ExternalModel)
         {
             string fullPath = Path.Combine(Application.streamingAssetsPath, externalModelPath);
-            if (File.Exists(fullPath))
+            
+            // Используем метод ImportONNXModel для импорта модели
+            bool success = ImportONNXModel(fullPath);
+            
+            if (!success)
             {
-                Debug.Log($"Загрузка внешней модели из: {fullPath}");
-                
-                // В рантайме невозможно напрямую создать NNModel из файла.
-                // Здесь мы должны использовать ModelLoader для загрузки модели напрямую в объект Model
-                try
-                {
-                    byte[] modelData = File.ReadAllBytes(fullPath);
-                    model = ModelLoader.Load(modelData);
-                    Debug.Log("Внешняя модель успешно загружена");
-                }
-                catch (System.Exception e)
-                {
-                    Debug.LogError($"Ошибка загрузки внешней модели: {e.Message}");
-                    useDemoMode = true;
-                }
-            }
-            else
-            {
-                Debug.LogWarning($"Внешняя модель не найдена по пути: {fullPath}. Переключаемся на демо-режим");
+                Debug.LogWarning($"Не удалось импортировать ONNX модель. Переключаемся в демо-режим.");
                 useDemoMode = true;
             }
         }
@@ -163,6 +215,58 @@ public class WallSegmentation : MonoBehaviour
         {
             InitializeModel();
         }
+    }
+    
+    // Дополнительный метод для получения и вывода имен выходных тензоров модели
+    private string GetCorrectOutputTensorName()
+    {
+        if (model == null)
+        {
+            Debug.LogError("Модель не загружена, невозможно получить имена выходных тензоров");
+            return outputName; // возвращаем имя по умолчанию, хотя оно скорее всего будет неверным
+        }
+
+        // Выводим все доступные выходы модели
+        Debug.Log($"Доступные выходные тензоры: {string.Join(", ", model.outputs)}");
+        
+        // Если выходов нет, возвращаем значение по умолчанию
+        if (model.outputs.Count == 0)
+        {
+            Debug.LogError("Модель не имеет выходных тензоров!");
+            return outputName;
+        }
+        
+        // Возвращаем первое имя выходного тензора из списка
+        return model.outputs[0];
+    }
+    
+    // Дополнительный метод для инспекции модели и вывода информации о тензорах
+    private void InspectModelOperators()
+    {
+        if (model == null)
+        {
+            Debug.LogError("Модель не загружена, невозможно определить операторы");
+            return;
+        }
+
+        Debug.Log($"=== Операторы модели ({model.layers.Count}) ===");
+        foreach (var layer in model.layers)
+        {
+            Debug.Log($"Оператор: {layer.name}, Тип: {layer.type}");
+            Debug.Log($"  Входы: {string.Join(", ", layer.inputs)}");
+            
+            // Вывод информации о выходах, используя тип string
+            if (layer.outputs != null && layer.outputs.Length > 0)
+            {
+                Debug.Log($"  Выходы: {layer.outputs.Length} тензоров");
+            }
+        }
+
+        Debug.Log($"=== Входные тензоры модели ===");
+        Debug.Log(string.Join(", ", model.inputs));
+
+        Debug.Log($"=== Выходные тензоры модели ===");
+        Debug.Log(string.Join(", ", model.outputs));
     }
     
     // Инициализация модели Barracuda
@@ -184,6 +288,13 @@ public class WallSegmentation : MonoBehaviour
             
             if (model != null)
             {
+                // Инспектируем модель для вывода информации о тензорах и операторах
+                InspectModelOperators();
+                
+                // Получаем правильное имя выходного тензора
+                outputName = GetCorrectOutputTensorName();
+                Debug.Log($"Используется выходной тензор: {outputName}");
+                
                 worker = WorkerFactory.CreateWorker(WorkerFactory.Type.Auto, model);
                 Debug.Log("Barracuda worker создан успешно");
             }
@@ -372,62 +483,110 @@ public class WallSegmentation : MonoBehaviour
             {
                 // Запускаем инференс модели
                 worker.Execute(inputTensor);
-                var output = worker.PeekOutput(outputName);
-                Debug.Log($"Получен выходной тензор: {output.shape}");
                 
-                // Создаем результирующую текстуру для сегментированного изображения
-                Texture2D resultTexture = new Texture2D(inputWidth, inputHeight, TextureFormat.RGBA32, false);
-                
-                // Интерпретируем результат для BiseNet (маска классов)
-                int numClasses = output.shape[1]; // Количество классов в выходном слое
-                
-                // Обрабатываем результат сегментации
-                for (int y = 0; y < inputHeight; y++)
+                // Проверяем, существует ли указанный выходной тензор
+                if (string.IsNullOrEmpty(outputName))
                 {
-                    for (int x = 0; x < inputWidth; x++)
+                    // Берем первый доступный выходной тензор, если имя не задано
+                    if (model.outputs.Count > 0)
                     {
-                        // Находим класс с максимальной вероятностью в данной точке
-                        float maxVal = float.MinValue;
-                        int bestClass = 0;
-                        
-                        for (int c = 0; c < numClasses; c++)
-                        {
-                            // BiseNet возвращает scores для каждого класса в данной точке
-                            float value = output[0, c, y, x];
-                            if (value > maxVal)
-                            {
-                                maxVal = value;
-                                bestClass = c;
-                            }
-                        }
-                        
-                        // Цветовая схема для классов Cityscapes
-                        Color pixelColor = Color.black;
-                        
-                        // Если этот пиксель распознан как стена (wallClassIndex)
-                        if (bestClass == wallClassIndex)
-                        {
-                            pixelColor = new Color(0.2f, 0.5f, 0.9f, 0.8f); // Синий для стен
-                        }
-                        else
-                        {
-                            // Разные цвета для других классов для отладки
-                            float hue = (float)bestClass / numClasses;
-                            pixelColor = Color.HSVToRGB(hue, 0.7f, 0.3f);
-                            pixelColor.a = 0.3f; // Полупрозрачный для не-стен
-                        }
-                        
-                        resultTexture.SetPixel(x, y, pixelColor);
+                        outputName = model.outputs[0];
+                        Debug.Log($"Используем первый доступный выходной тензор: {outputName}");
+                    }
+                    else
+                    {
+                        Debug.LogError("Модель не имеет выходных тензоров");
+                        useDemoMode = true;
+                        return GenerateDemoSegmentation(inputTexture);
                     }
                 }
                 
-                resultTexture.Apply();
+                try
+                {
+                    var output = worker.PeekOutput(outputName);
+                    Debug.Log($"Получен выходной тензор: {output.shape}");
                 
-                // Очищаем ресурсы
-                Destroy(resizedTexture);
+                    // Создаем результирующую текстуру для сегментированного изображения
+                    Texture2D resultTexture = new Texture2D(inputWidth, inputHeight, TextureFormat.RGBA32, false);
                 
-                Debug.Log("BiseNet сегментация успешно выполнена");
-                return resultTexture;
+                    // Интерпретируем результат для BiseNet (маска классов)
+                    int numClasses = output.shape[1]; // Количество классов в выходном слое
+                
+                    // Обрабатываем результат сегментации
+                    for (int y = 0; y < inputHeight; y++)
+                    {
+                        for (int x = 0; x < inputWidth; x++)
+                        {
+                            // Находим класс с максимальной вероятностью в данной точке
+                            float maxVal = float.MinValue;
+                            int bestClass = 0;
+                        
+                            for (int c = 0; c < numClasses; c++)
+                            {
+                                // BiseNet возвращает scores для каждого класса в данной точке
+                                float value = output[0, c, y, x];
+                                if (value > maxVal)
+                                {
+                                    maxVal = value;
+                                    bestClass = c;
+                                }
+                            }
+                        
+                            // Цветовая схема для классов Cityscapes
+                            Color pixelColor = Color.black;
+                        
+                            // Если этот пиксель распознан как стена (wallClassIndex)
+                            if (bestClass == wallClassIndex)
+                            {
+                                pixelColor = new Color(0.2f, 0.5f, 0.9f, 0.8f); // Синий для стен
+                            }
+                            else
+                            {
+                                // Разные цвета для других классов для отладки
+                                float hue = (float)bestClass / numClasses;
+                                pixelColor = Color.HSVToRGB(hue, 0.7f, 0.3f);
+                                pixelColor.a = 0.3f; // Полупрозрачный для не-стен
+                            }
+                        
+                            resultTexture.SetPixel(x, y, pixelColor);
+                        }
+                    }
+                
+                    resultTexture.Apply();
+                
+                    // Очищаем ресурсы
+                    Destroy(resizedTexture);
+                
+                    Debug.Log("BiseNet сегментация успешно выполнена");
+                    return resultTexture;
+                }
+                catch (System.Exception e)
+                {
+                    Debug.LogError($"Ошибка при доступе к тензору {outputName}: {e.Message}");
+                    
+                    // Пробуем найти доступные выходные тензоры
+                    Debug.Log("Доступные выходы модели:");
+                    // Вместо worker.GetOutputs() используем model.outputs
+                    if (model != null && model.outputs != null)
+                    {
+                        foreach (var output in model.outputs)
+                        {
+                            Debug.Log($"- {output}");
+                        }
+                    }
+                    else
+                    {
+                        Debug.LogError("Не удалось получить список выходных тензоров модели");
+                    }
+                    
+                    errorCount++;
+                    // Если превышено количество ошибок, переключаемся на демо-режим
+                    if (errorCount > 3)
+                    {
+                        Debug.LogWarning("Превышено количество ошибок сегментации. Переключение в демо-режим.");
+                        useDemoMode = true;
+                    }
+                }
             }
             catch (System.Exception e)
             {
@@ -509,7 +668,95 @@ public class WallSegmentation : MonoBehaviour
         }
         
         demoTexture.Apply();
+        
+        // Создаем демо-стены, если их еще нет
+        if (demoWalls.Count == 0)
+        {
+            CreateDemoWalls();
+        }
+        
+        // После создания демонстрационных стен помечаем их как плоскости сегментации
+        foreach (var wall in demoWalls)
+        {
+            if (wall != null)
+            {
+                ARPlaneVisualizer visualizer = wall.GetComponentInChildren<ARPlaneVisualizer>();
+                if (visualizer != null)
+                {
+                    visualizer.SetAsSegmentationPlane(true);
+                }
+            }
+        }
+        
         return demoTexture;
+    }
+    
+    /// <summary>
+    /// Создает демонстрационные стены для визуализации
+    /// </summary>
+    private void CreateDemoWalls()
+    {
+        // Очищаем существующие демо-стены
+        foreach (var wall in demoWalls)
+        {
+            if (wall != null)
+            {
+                Destroy(wall);
+            }
+        }
+        demoWalls.Clear();
+        
+        // Создаем демо-стены
+        
+        // Левая стена
+        CreateDemoWall("LeftWall", new Vector3(-2f, 0, 2f), Quaternion.Euler(0, 90, 0), 4f, 2.5f);
+        
+        // Правая стена
+        CreateDemoWall("RightWall", new Vector3(2f, 0, 2f), Quaternion.Euler(0, -90, 0), 4f, 2.5f);
+        
+        // Задняя стена
+        CreateDemoWall("BackWall", new Vector3(0, 0, 4f), Quaternion.Euler(0, 0, 0), 4f, 2.5f);
+        
+        Debug.Log($"Создано {demoWalls.Count} демонстрационных стен");
+    }
+
+    /// <summary>
+    /// Создает одну демонстрационную стену
+    /// </summary>
+    private void CreateDemoWall(string name, Vector3 position, Quaternion rotation, float width, float height)
+    {
+        // Создаем объект стены
+        GameObject wallObj = new GameObject($"DemoWall_{name}");
+        wallObj.transform.SetParent(transform);
+        wallObj.transform.position = position;
+        wallObj.transform.rotation = rotation;
+        
+        // Добавляем компоненты для визуализации
+        MeshFilter meshFilter = wallObj.AddComponent<MeshFilter>();
+        MeshRenderer meshRenderer = wallObj.AddComponent<MeshRenderer>();
+        
+        // Создаем меш для стены
+        Mesh wallMesh = CreateWallMesh(width, height);
+        meshFilter.mesh = wallMesh;
+        
+        // Устанавливаем материал
+        if (wallMaterial != null)
+        {
+            meshRenderer.material = wallMaterial;
+        }
+        else
+        {
+            // Если материал не задан, создаем временный
+            Material tempMaterial = new Material(Shader.Find("Standard"));
+            tempMaterial.color = new Color(0.8f, 0.8f, 0.8f, 0.7f);
+            meshRenderer.material = tempMaterial;
+        }
+        
+        // Добавляем ARPlaneVisualizer, чтобы использовать его функционал
+        ARPlaneVisualizer visualizer = wallObj.AddComponent<ARPlaneVisualizer>();
+        
+        // Добавляем в список демо-стен
+        demoWalls.Add(wallObj);
     }
     
     // Обновляем метод OnDisable для надежного освобождения тензоров
@@ -595,51 +842,90 @@ public class WallSegmentation : MonoBehaviour
         }
     }
 
-    // Добавляем публичный метод для переключения режима
+    // Переключение режима сегментации
     public void SwitchMode(SegmentationMode newMode)
     {
-        // Если режим уже такой же, ничего не делаем
-        if (currentMode == newMode)
+        // Если режим не меняется и это не принудительный Demo режим, то выходим
+        if (currentMode == newMode && newMode != SegmentationMode.Demo)
+        {
+            Debug.Log($"Режим сегментации не изменен (уже активен {newMode})");
             return;
-            
-        // Запоминаем новый режим
+        }
+
         currentMode = newMode;
         
-        // Сбрасываем флаги ошибок
+        // Сохраняем текущее состояние демо-режима до загрузки модели
+        bool wasUsingDemoMode = useDemoMode;
+        
+        // Сбрасываем принудительный демо-режим
         useDemoMode = false;
+        
+        // Сбрасываем счетчик ошибок
         errorCount = 0;
         
-        // Освобождаем ресурсы текущей модели
+        // Останавливаем текущий рабочий процесс, если он существует
         if (worker != null)
         {
             worker.Dispose();
             worker = null;
         }
         
-        if (model != null)
-        {
-            model = null;
-        }
-        
-        // Загружаем новую модель
+        // Загружаем и инициализируем новую модель
         LoadSelectedModel();
         
-        Debug.Log($"Режим сегментации переключен на: {newMode}");
+        // Проверяем, изменился ли режим работы
+        if (wasUsingDemoMode != useDemoMode)
+        {
+            Debug.Log($"Режим сегментации переключен: {newMode}, Демо-режим: {useDemoMode}");
+            
+            // Дополнительная информация, если переключение в демо-режим произошло из-за ошибки
+            if (useDemoMode && newMode != SegmentationMode.Demo)
+            {
+                Debug.LogWarning("Принудительное переключение в демо-режим из-за ошибки загрузки модели");
+            }
+        }
+        else
+        {
+            Debug.Log($"Режим сегментации переключен: {newMode}");
+        }
     }
-
-    // Добавляем публичный метод для получения текущего режима
+    
+    // Получение текущего режима
     public SegmentationMode GetCurrentMode()
     {
-        if (forceDemoMode || useDemoMode)
-            return SegmentationMode.Demo;
-            
         return currentMode;
     }
     
-    // Добавляем публичный метод для проверки, использует ли компонент демо-режим
+    // Проверка использования демо-режима
     public bool IsUsingDemoMode()
     {
-        return forceDemoMode || useDemoMode || currentMode == SegmentationMode.Demo;
+        return useDemoMode || currentMode == SegmentationMode.Demo;
+    }
+    
+    // Получение статуса загрузки модели
+    public string GetModelStatus()
+    {
+        if (IsUsingDemoMode())
+        {
+            if (currentMode == SegmentationMode.Demo)
+            {
+                return "Демо-режим (выбран пользователем)";
+            }
+            else
+            {
+                return "Демо-режим (ошибка загрузки модели)";
+            }
+        }
+        else if (currentMode == SegmentationMode.EmbeddedModel)
+        {
+            return "Встроенная модель";
+        }
+        else if (currentMode == SegmentationMode.ExternalModel)
+        {
+            return "Внешняя модель";
+        }
+        
+        return "Неизвестно";
     }
 
     // Привязка маски сегментации к AR плоскостям
@@ -792,5 +1078,124 @@ public class WallSegmentation : MonoBehaviour
                 Debug.LogError("Не удалось найти компонент RawImage для отладочной визуализации");
             }
         }
+    }
+
+    /// <summary>
+    /// Создает визуализацию обнаруженных стен
+    /// </summary>
+    /// <param name="prediction">Информация о сегментации</param>
+    private void CreateVisualization(WallPrediction prediction)
+    {
+        if (prediction == null || prediction.walls == null || prediction.walls.Count == 0)
+        {
+            Debug.LogWarning("Нет стен для визуализации");
+            return;
+        }
+        
+        // Очищаем предыдущие стены, если они есть
+        ClearCurrentWalls();
+        
+        // Создаем новые объекты для каждой стены
+        foreach (var wallData in prediction.walls)
+        {
+            // Создаем GameObject для стены
+            GameObject wallObj = new GameObject($"SegmentedWall_{wallData.id}");
+            
+            // Устанавливаем родителя
+            wallObj.transform.SetParent(transform);
+            
+            // Устанавливаем позицию и поворот
+            wallObj.transform.position = wallData.position;
+            wallObj.transform.rotation = wallData.rotation;
+            
+            // Добавляем компоненты
+            MeshFilter meshFilter = wallObj.AddComponent<MeshFilter>();
+            MeshRenderer meshRenderer = wallObj.AddComponent<MeshRenderer>();
+            
+            // Создаем меш для стены
+            Mesh wallMesh = CreateWallMesh(wallData.width, wallData.height);
+            meshFilter.mesh = wallMesh;
+            
+            // Устанавливаем материал
+            meshRenderer.material = wallMaterial;
+            
+            // Добавляем ARPlaneVisualizer
+            ARPlaneVisualizer visualizer = wallObj.AddComponent<ARPlaneVisualizer>();
+            
+            // Помечаем как плоскость сегментации
+            visualizer.SetAsSegmentationPlane(true);
+            
+            // Добавляем в список текущих стен
+            currentWalls.Add(wallObj);
+        }
+        
+        Debug.Log($"Создано {currentWalls.Count} сегментированных стен");
+    }
+
+    /// <summary>
+    /// Очищает текущие объекты стен
+    /// </summary>
+    private void ClearCurrentWalls()
+    {
+        if (currentWalls != null)
+        {
+            foreach (var wall in currentWalls)
+            {
+                if (wall != null)
+                {
+                    Destroy(wall);
+                }
+            }
+            
+            currentWalls.Clear();
+        }
+        else
+        {
+            currentWalls = new List<GameObject>();
+        }
+    }
+
+    /// <summary>
+    /// Создает меш для стены
+    /// </summary>
+    private Mesh CreateWallMesh(float width, float height)
+    {
+        Mesh mesh = new Mesh();
+        
+        // Создаем вершины (простой прямоугольник)
+        Vector3[] vertices = new Vector3[4]
+        {
+            new Vector3(-width/2, -height/2, 0),
+            new Vector3(width/2, -height/2, 0),
+            new Vector3(width/2, height/2, 0),
+            new Vector3(-width/2, height/2, 0)
+        };
+        
+        // УФ-координаты
+        Vector2[] uv = new Vector2[4]
+        {
+            new Vector2(0, 0),
+            new Vector2(1, 0),
+            new Vector2(1, 1),
+            new Vector2(0, 1)
+        };
+        
+        // Треугольники
+        int[] triangles = new int[6]
+        {
+            0, 1, 2,
+            2, 3, 0
+        };
+        
+        // Установка данных в меш
+        mesh.vertices = vertices;
+        mesh.uv = uv;
+        mesh.triangles = triangles;
+        
+        // Пересчитываем нормали и границы
+        mesh.RecalculateNormals();
+        mesh.RecalculateBounds();
+        
+        return mesh;
     }
 } 

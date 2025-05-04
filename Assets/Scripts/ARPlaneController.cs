@@ -14,6 +14,7 @@ public class ARPlaneController : MonoBehaviour
     [SerializeField] private bool forceUpdateOnStart = true;
     [SerializeField] private float updateDelay = 1.0f;
     [SerializeField] private bool enableDebugLogs = true;
+    [SerializeField] private bool hideDefaultPlanes = true; // Скрывать стандартные AR плоскости
     
     private void Start()
     {
@@ -27,10 +28,83 @@ public class ARPlaneController : MonoBehaviour
             }
         }
         
+        // Если нужно скрыть стандартные плоскости
+        if (hideDefaultPlanes)
+        {
+            HideDefaultPlanes();
+            
+            // Подписываемся на событие изменения плоскостей, чтобы скрывать новые
+            planeManager.planesChanged += OnPlanesChanged;
+        }
+        
         if (forceUpdateOnStart)
         {
             // Запускаем обновление с задержкой, чтобы убедиться, что все компоненты инициализированы
             StartCoroutine(ForceUpdatePlanesWithDelay());
+        }
+    }
+    
+    private void OnDestroy()
+    {
+        if (planeManager != null)
+        {
+            planeManager.planesChanged -= OnPlanesChanged;
+        }
+    }
+    
+    /// <summary>
+    /// Обработчик события изменения плоскостей
+    /// </summary>
+    private void OnPlanesChanged(ARPlanesChangedEventArgs args)
+    {
+        if (hideDefaultPlanes && args.added != null && args.added.Count > 0)
+        {
+            // Для каждой новой плоскости вызываем обработку
+            foreach (var plane in args.added)
+            {
+                ProcessPlane(plane);
+            }
+        }
+    }
+    
+    /// <summary>
+    /// Обрабатывает плоскость - скрывает стандартные AR плоскости
+    /// </summary>
+    private void ProcessPlane(ARPlane plane)
+    {
+        if (plane == null) return;
+        
+        // Получаем компонент визуализации
+        ARPlaneVisualizer visualizer = plane.GetComponentInChildren<ARPlaneVisualizer>();
+        
+        // Если это не плоскость сегментации, скрываем ее
+        if (visualizer != null)
+        {
+            // По умолчанию все плоскости НЕ являются плоскостями сегментации
+            // Такой флаг устанавливается только для плоскостей, созданных через WallSegmentation
+            MeshRenderer meshRenderer = visualizer.GetComponent<MeshRenderer>();
+            if (meshRenderer != null)
+            {
+                meshRenderer.enabled = false;
+            }
+        }
+    }
+    
+    /// <summary>
+    /// Скрывает все стандартные AR плоскости, оставляя видимыми только плоскости сегментации
+    /// </summary>
+    public void HideDefaultPlanes()
+    {
+        if (planeManager == null) return;
+        
+        foreach (var plane in planeManager.trackables)
+        {
+            ProcessPlane(plane);
+        }
+        
+        if (enableDebugLogs)
+        {
+            Debug.Log("ARPlaneController: Скрыты стандартные AR плоскости");
         }
     }
     

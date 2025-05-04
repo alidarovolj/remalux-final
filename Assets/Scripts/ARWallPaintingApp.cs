@@ -56,7 +56,9 @@ public class ARWallPaintingApp : MonoBehaviour
         if (uiManager == null)
             uiManager = Object.FindAnyObjectByType<UIManager>();
         
-        // Настройка отображения плоскостей
+        // Настройка отображения плоскостей - отключаем стандартные плоскости
+        showPlaneVisualizers = false;
+        
         if (planeManager != null)
         {
             planeManager.planesChanged += OnPlanesChanged;
@@ -66,6 +68,17 @@ public class ARWallPaintingApp : MonoBehaviour
             {
                 plane.gameObject.SetActive(showPlaneVisualizers);
             }
+        }
+        
+        // Находим и используем ARPlaneController для скрытия стандартных плоскостей
+        ARPlaneController planeController = FindObjectOfType<ARPlaneController>();
+        if (planeController != null)
+        {
+            planeController.HideDefaultPlanes();
+        }
+        else
+        {
+            Debug.LogWarning("ARPlaneController не найден. Стандартные плоскости могут остаться видимыми.");
         }
         
         // Указываем начальное состояние
