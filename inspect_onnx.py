@@ -1,67 +1,89 @@
-import onnx
-from onnx import numpy_helper
+#!/usr/bin/env python3
+# inspect_onnx.py
 
-def inspect_onnx_model(model_path: str):
-    # Загружаем модель
-    model = onnx.load(model_path)
+import onnx
+from onnx import numpy_helper, shape_inference
+import onnxruntime as ort
+import numpy as np
+import sys
+
+def inspect_model(proto_path: str, do_shape_infer: bool = True):
+    # Загрузка и (опциональная) корректировка форм
+    model = onnx.load(proto_path)
+    print(f"Loaded ONNX model: {proto_path}")
+    print(f"  IR version: {model.ir_version}")
+    print(f"  Producer: {model.producer_name}\n")
+
+    if do_shape_infer:
+        model = shape_inference.infer_shapes(model)
+        print("Applied shape inference\n")
+
     graph = model.graph
 
-    print(f"Model IR version: {model.ir_version}")
-    print(f"Producer name: {model.producer_name}\n")
-
-    # Инспекция входов
-    print("=== Inputs ===")
+    # --- Inputs ---
+    print("=== INPUTS ===")
     for inp in graph.input:
-        name = inp.name
-        # Получаем прототип типа (тип и форму)
-        tensor_type = inp.type.tensor_type
-        elem_type = tensor_type.elem_type
-        shape = [dim.dim_value for dim in tensor_type.shape.dim]
-        print(f"Name: {name}")
-        print(f"  ElemType: {elem_type}")
-        print(f"  Shape: {shape}\n")
-
-    # Инспекция выходов
-    print("=== Outputs ===")
-    for out in graph.output:
-        name = out.name
-        tensor_type = out.type.tensor_type
-        elem_type = tensor_type.elem_type
-        shape = [dim.dim_value for dim in tensor_type.shape.dim]
-        print(f"Name: {name}")
-        print(f"  ElemType: {elem_type}")
-        print(f"  Shape: {shape}\n")
-
-    # Инспекция initializers (весов)
-    print("=== Initializers (первые 10) ===")
-    for i, init in enumerate(graph.initializer):
-        if i >= 10:
-            print(f"...и еще {len(graph.initializer) - 10} initializers...")
-            break
-        np_arr = numpy_helper.to_array(init)
-        print(f"Name: {init.name}")
-        print(f"  Dtype: {np_arr.dtype}")
-        print(f"  Shape: {list(np_arr.shape)}")
+        # Вход может быть также initializer, фильтруем его
+        if any(init.name == inp.name for init in graph.initializer):
+            continue
+        tt = inp.type.tensor_type
+        shape = [d.dim_value for d in tt.shape.dim]
+        tpe = onnx.mapping.TENSOR_TYPE_TO_NP_TYPE.get(tt.elem_type, tt.elem_type)
+        print(f"  {inp.name}: dtype={tpe}, shape={shape}")
     print()
 
-    # Инспекция узлов (первые 10)
-    print("=== Nodes (первые 10) ===")
+    # --- Outputs ---
+    print("=== OUTPUTS ===")
+    for out in graph.output:
+        tt = out.type.tensor_type
+        shape = [d.dim_value for d in tt.shape.dim]
+        tpe = onnx.mapping.TENSOR_TYPE_TO_NP_TYPE.get(tt.elem_type, tt.elem_type)
+        print(f"  {out.name}: dtype={tpe}, shape={shape}")
+    print()
+
+    # --- Initializers (weights) ---
+    print("=== INITIALIZERS ===")
+    for init in graph.initializer:
+        arr = numpy_helper.to_array(init)
+        print(f"  {init.name}: dtype={arr.dtype}, shape={list(arr.shape)}")
+    print()
+
+    # --- Nodes ---
+    print("=== NODES ===")
     for i, node in enumerate(graph.node):
-        if i >= 10:
-            print(f"...и еще {len(graph.node) - 10} nodes...")
-            break
-        print(f"Node {i}: {node.op_type}")
-        print(f"  Inputs: {list(node.input)}")
-        print(f"  Outputs: {list(node.output)}")
-        print()
+        print(f"{i:04d}: op_type={node.op_type}")
+        print(f"       inputs:  {list(node.input)}")
+        print(f"       outputs: {list(node.output)}")
+    print(f"\nTotal nodes: {len(graph.node)}\n")
+
+def runtime_test(proto_path: str):
+    """
+    Простой тестовый прогон через onnxruntime:
+    создаём dummy-вход нулями и проверяем, что можно выполнить сессию.
+    """
+    sess = ort.InferenceSession(proto_path, providers=["CPUExecutionProvider"])
+    input_meta = sess.get_inputs()[0]
+    out_meta = sess.get_outputs()[0]
+    # Собираем случайный батч из нулей
+    dummy_input = np.zeros([dim if dim > 0 else 1 for dim in input_meta.shape], dtype=np.float32)
+    print(f"Running dummy inference on input `{input_meta.name}` shape {dummy_input.shape}...")
+    res = sess.run([out_meta.name], {input_meta.name: dummy_input})
+    print(f"  Output `{out_meta.name}` shape: {res[0].shape}")
 
 if __name__ == "__main__":
-    import sys
-    if len(sys.argv) != 2:
-        print("Usage: python inspect_onnx.py path/to/model.onnx")
-        print("Using default path: A:/Unity Projects/My project/Assets/Models/model.onnx")
-        model_path = "A:/Unity Projects/My project/Assets/Models/model.onnx"
-    else:
-        model_path = sys.argv[1]
+    if len(sys.argv) < 2:
+        print("Usage: python inspect_onnx.py path/to/model.onnx [--no-infer] [--test-run]")
+        sys.exit(1)
     
-    inspect_onnx_model(model_path) 
+    do_shape_infer = "--no-infer" not in sys.argv
+    do_test_run = "--test-run" in sys.argv
+    
+    model_path = sys.argv[1]
+    inspect_model(model_path, do_shape_infer)
+    
+    if do_test_run:
+        print("\n=== RUNTIME TEST ===")
+        try:
+            runtime_test(model_path)
+        except Exception as e:
+            print(f"Runtime test failed: {e}") 

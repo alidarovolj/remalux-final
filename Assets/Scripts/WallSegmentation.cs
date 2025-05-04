@@ -35,16 +35,16 @@ public class WallSegmentation : MonoBehaviour
     [SerializeField] private string externalModelPath = "Models/model.onnx"; // Изменено на новую модель SegFormer
     
     [Header("Barracuda Model")]
-    [SerializeField] private NNModel embeddedModelAsset; // Модель, привязанная в Unity
-    [SerializeField] private string inputName = "pixel_values"; // Имя входного тензора для ONNX
-    [SerializeField] private string outputName = "logits"; // Имя выходного тензора для ONNX
-    [SerializeField] private int inputChannels = 32; // Количество входных каналов (32 для текущей модели)
+    [SerializeField] private NNModel modelAsset; // Модель ONNX через asset
     
     [Header("Segmentation Parameters")]
-    [SerializeField] private int inputWidth = 32; // Размер входа модели по ширине
-    [SerializeField] private int inputHeight = 32; // Размер входа модели по высоте
-    [SerializeField] private float threshold = 0.5f;
-    [SerializeField] private int wallClassIndex = 9; // Используем класс с индексом 9 для стен
+    [SerializeField] private int inputWidth = 32; // Для BiseNet.onnx должно быть 960
+    [SerializeField] private int inputHeight = 32; // Для BiseNet.onnx должно быть 720
+    [SerializeField] private int inputChannels = 3; // Исправлено с 32 на 3, т.к. модели ожидают RGB (3 канала)
+    [SerializeField] private string inputName = "pixel_values"; // Для использования BiseNet.onnx изменить на "image"
+    [SerializeField] private string outputName = "logits"; // Для использования BiseNet.onnx изменить на "predict"
+    [SerializeField, Range(0, 1)] private float threshold = 0.5f;
+    [SerializeField] private int wallClassIndex = 9; // Для model.onnx лучше использовать 0 или 3
     
     [Header("Debug & Performance")]
     [SerializeField] private bool forceDemoMode = false; // Отключаем принудительный демо-режим
@@ -72,7 +72,7 @@ public class WallSegmentation : MonoBehaviour
     private List<GameObject> currentWalls = new List<GameObject>(); // Список текущих стен
     private List<GameObject> demoWalls = new List<GameObject>(); // Список демо-стен
     private bool isModelInitialized = false; // Флаг инициализации модели
-    
+
     // Инициализация
     private void Start()
     {
@@ -505,127 +505,40 @@ public class WallSegmentation : MonoBehaviour
             // Получаем данные из текстуры и преобразуем их в формат для тензора
             float[] tensorData = ConvertTextureToTensor(sourceTexture, inputWidth, inputHeight, inputChannels);
             
-            // Создаем тензор с правильной сигнатурой
+            // Создаем тензор с правильной сигнатурой - используя конструктор с поддержкой float[]
+            // ПРИМЕЧАНИЕ: Unity Barracuda использует NHWC, но ONNX ожидает NCHW
+            // Необходимо правильное преобразование форматов тензоров
             inputTensor = new Tensor(1, inputHeight, inputWidth, inputChannels, tensorData);
             
-            using (inputTensor)
+            // Запускаем сеть
+            worker.Execute(inputTensor);
+            
+            // Получаем результат
+            Tensor outputTensor = worker.PeekOutput(outputName);
+            
+            // Проверка на корректность выходного тензора
+            if (outputTensor == null)
             {
-                // Если тензор не соответствует ожидаемому формату модели
-                if (inputTensor.shape[3] != inputChannels)
-                {
-                    Debug.Log($"Преобразуем входной тензор из {inputTensor.shape[3]} каналов в {inputChannels} каналов");
-                    
-                    // Создаем новый тензор с нужной размерностью
-                    var tensorShape = new TensorShape(1, inputWidth, inputHeight, inputChannels);
-                    using (var convertedTensor = new Tensor(tensorShape))
-                    {
-                        // Копируем данные из исходного тензора в новый, дублируя первые 3 канала
-                        // или используя только первый канал для всех остальных
-                        for (int h = 0; h < inputHeight; h++)
-                        {
-                            for (int w = 0; w < inputWidth; w++)
-                            {
-                                // Копируем RGB каналы, если они есть
-                                for (int c = 0; c < Math.Min(inputTensor.shape[3], 3); c++)
-                                {
-                                    convertedTensor[0, h, w, c] = inputTensor[0, h, w, c];
-                                }
-                                
-                                // Дублируем первый канал для остальных каналов
-                                for (int c = 3; c < inputChannels; c++)
-                                {
-                                    convertedTensor[0, h, w, c] = inputTensor[0, h, w, 0];
-                                }
-                            }
-                        }
-                        
-                        // Запускаем исполнение модели с конвертированным тензором
-                        worker.Execute(convertedTensor);
-                    }
-                }
-                else
-                {
-                    // Запускаем исполнение модели с исходным тензором
-                    worker.Execute(inputTensor);
-                }
-                
-                // Получаем выходной тензор
-                var outputTensor = worker.PeekOutput(outputName);
-                
-                // Определяем размер выходного тензора
-                int outBatch = outputTensor.shape[0];
-                int outHeight = outputTensor.shape[1];
-                int outWidth = outputTensor.shape[2];
-                int outChannels = outputTensor.shape[3];
-                
-                Debug.Log($"Размер выходного тензора: {outBatch}x{outHeight}x{outWidth}x{outChannels}");
-                
-                // Проверяем на некорректные размеры тензора (например, 1x0x1)
-                if (outHeight <= 0 || outWidth <= 0 || outChannels <= 0)
-                {
-                    Debug.LogWarning($"Модель вернула некорректные размеры тензора: {outBatch}x{outHeight}x{outWidth}x{outChannels}. Используем безопасные значения по умолчанию.");
-                    
-                    // Используем демо-режим в случае ошибки
-                    return DemoSegmentation(sourceTexture);
-                }
-                
-                // Создаем новую текстуру для результата
-                var resultTexture = new Texture2D(outWidth, outHeight, TextureFormat.RGBA32, false);
-                
-                // Копируем данные из выходного тензора в текстуру
-                for (int h = 0; h < outHeight; h++)
-                {
-                    for (int w = 0; w < outWidth; w++)
-                    {
-                        // Обрабатываем каждый пиксель результата
-                        float maxValue = float.MinValue;
-                        int bestClass = 0;
-                        
-                        // Находим класс с максимальным значением (в случае многоклассовой сегментации)
-                        if (outChannels > 1)
-                        {
-                            for (int c = 0; c < outChannels; c++)
-                            {
-                                float value = outputTensor[0, h, w, c];
-                                if (value > maxValue)
-                                {
-                                    maxValue = value;
-                                    bestClass = c;
-                                }
-                            }
-                        }
-                        else
-                        {
-                            // Для одноканального выхода используем пороговое значение
-                            maxValue = outputTensor[0, h, w, 0];
-                            bestClass = maxValue > 0.5f ? 1 : 0;
-                        }
-                        
-                        // Назначаем цвет в зависимости от класса (стена/не стена)
-                        Color pixelColor;
-                        if (bestClass == wallClassIndex)
-                        {
-                            // Класс "стена"
-                            pixelColor = wallColor;
-                        }
-                        else
-                        {
-                            // Класс "не стена" или другой класс
-                            pixelColor = Color.clear; // Прозрачный для не-стен
-                        }
-                        
-                        resultTexture.SetPixel(w, h, pixelColor);
-                    }
-                }
-                
-                resultTexture.Apply();
-                return resultTexture;
+                Debug.LogError($"Не удалось получить выходной тензор с именем {outputName}");
+                return DemoSegmentation(sourceTexture);
             }
+            
+            // Преобразуем результат обратно в текстуру
+            return CreateSegmentationTexture(outputTensor, sourceTexture.width, sourceTexture.height);
         }
-        catch (Exception e)
+        catch (System.Exception e)
         {
-            Debug.LogError($"Ошибка при сегментации: {e.Message}\n{e.StackTrace}");
+            Debug.LogError($"Ошибка при запуске модели: {e.Message}");
             return DemoSegmentation(sourceTexture);
+        }
+        finally
+        {
+            // Освобождаем ресурсы
+            if (inputTensor != null)
+            {
+                inputTensor.Dispose();
+                inputTensor = null;
+            }
         }
     }
     
@@ -682,6 +595,106 @@ public class WallSegmentation : MonoBehaviour
         }
         
         return tensorData;
+    }
+    
+    // Метод для создания текстуры сегментации из тензора
+    private Texture2D CreateSegmentationTexture(Tensor outputTensor, int targetWidth, int targetHeight)
+    {
+        // Определяем размер выходного тензора
+        int outBatch = outputTensor.shape[0];
+        int outChannels = outputTensor.shape[1]; // Для NCHW формата каналы идут после батча
+        int outHeight = outputTensor.shape[2];
+        int outWidth = outputTensor.shape[3];
+        
+        Debug.Log($"Размер выходного тензора: {outBatch}x{outChannels}x{outHeight}x{outWidth}");
+        
+        // Проверяем на некорректные размеры тензора
+        if (outHeight <= 0 || outWidth <= 0 || outChannels <= 0)
+        {
+            Debug.LogWarning($"Модель вернула некорректные размеры тензора: {outBatch}x{outChannels}x{outHeight}x{outWidth}. Используем безопасные значения по умолчанию.");
+            
+            // Используем демо-режим в случае ошибки
+            return DemoSegmentation(new Texture2D(targetWidth, targetHeight, TextureFormat.RGBA32, false));
+        }
+        
+        // Создаем новую текстуру для результата
+        var resultTexture = new Texture2D(outWidth, outHeight, TextureFormat.RGBA32, false);
+        
+        // Копируем данные из выходного тензора в текстуру
+        for (int h = 0; h < outHeight; h++)
+        {
+            for (int w = 0; w < outWidth; w++)
+            {
+                // Обрабатываем каждый пиксель результата
+                float maxValue = float.MinValue;
+                int bestClass = 0;
+                
+                // Находим класс с максимальным значением (в случае многоклассовой сегментации)
+                if (outChannels > 1)
+                {
+                    for (int c = 0; c < outChannels; c++)
+                    {
+                        // Для NCHW формата
+                        float value = outputTensor[0, c, h, w];
+                        if (value > maxValue)
+                        {
+                            maxValue = value;
+                            bestClass = c;
+                        }
+                    }
+                }
+                else
+                {
+                    // Для одноканального выхода используем пороговое значение
+                    maxValue = outputTensor[0, 0, h, w];
+                    bestClass = maxValue > threshold ? 1 : 0;
+                }
+                
+                // Назначаем цвет в зависимости от класса (стена/не стена)
+                Color pixelColor;
+                if (bestClass == wallClassIndex)
+                {
+                    // Класс "стена"
+                    pixelColor = wallColor;
+                }
+                else
+                {
+                    // Класс "не стена" или другой класс
+                    pixelColor = Color.clear; // Прозрачный для не-стен
+                }
+                
+                resultTexture.SetPixel(w, h, pixelColor);
+            }
+        }
+        
+        resultTexture.Apply();
+        
+        // Если размеры выходного тензора отличаются от целевых размеров,
+        // выполняем масштабирование текстуры
+        if (outWidth != targetWidth || outHeight != targetHeight)
+        {
+            Texture2D scaledTexture = new Texture2D(targetWidth, targetHeight, TextureFormat.RGBA32, false);
+            float scaleX = (float)outWidth / targetWidth;
+            float scaleY = (float)outHeight / targetHeight;
+            
+            for (int y = 0; y < targetHeight; y++)
+            {
+                for (int x = 0; x < targetWidth; x++)
+                {
+                    // Простое масштабирование методом ближайшего соседа
+                    int srcX = Mathf.Min(Mathf.FloorToInt(x * scaleX), outWidth - 1);
+                    int srcY = Mathf.Min(Mathf.FloorToInt(y * scaleY), outHeight - 1);
+                    
+                    Color pixelColor = resultTexture.GetPixel(srcX, srcY);
+                    scaledTexture.SetPixel(x, y, pixelColor);
+                }
+            }
+            
+            scaledTexture.Apply();
+            return scaledTexture;
+        }
+        
+        return resultTexture;
     }
     
     // Публичные методы, используемые другими скриптами
