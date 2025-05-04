@@ -379,6 +379,36 @@ public class ARWallVisualizationUI : MonoBehaviour
         UpdateStatusText();
     }
     
+    /// <summary>
+    /// Включает отладочную визуализацию для всех AR плоскостей
+    /// </summary>
+    public void EnableDebugForAllPlanes()
+    {
+        WallSegmentation wallSegmentation = FindObjectOfType<WallSegmentation>();
+        if (wallSegmentation != null)
+        {
+            // Попытка вызвать метод через рефлексию
+            var enableDebugMethod = wallSegmentation.GetType().GetMethod("EnableDebugForAllVisualizers", 
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                
+            if (enableDebugMethod != null)
+            {
+                Debug.Log("Принудительное включение отладки визуализаторов через UI...");
+                enableDebugMethod.Invoke(wallSegmentation, null);
+            }
+        }
+        
+        // Также принудительно включаем отладочную визуализацию через ARPlaneVisualizer
+        ARPlaneVisualizer[] visualizers = FindObjectsOfType<ARPlaneVisualizer>();
+        foreach (var visualizer in visualizers)
+        {
+            visualizer.SetDebugMode(true);
+            visualizer.SetExtendWalls(true);
+            
+            Debug.Log($"Включена отладочная визуализация для ARPlaneVisualizer на {visualizer.transform.parent?.name}");
+        }
+    }
+    
     private void OnDestroy()
     {
         // Отписываемся от событий

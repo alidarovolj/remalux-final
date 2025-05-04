@@ -127,6 +127,16 @@ public class SegmentationButtonHandler : MonoBehaviour
             // Обновляем статус плоскостей
             updatedCount = wallSegmentation.UpdatePlanesSegmentationStatus();
             Debug.Log($"Обновление сегментации завершено, обработано {updatedCount} плоскостей");
+            
+            // Пытаемся вызвать метод включения отладки для всех визуализаторов через рефлексию
+            var enableDebugMethod = wallSegmentation.GetType().GetMethod("EnableDebugForAllVisualizers", 
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                
+            if (enableDebugMethod != null)
+            {
+                Debug.Log("Принудительное включение отладки визуализаторов...");
+                enableDebugMethod.Invoke(wallSegmentation, null);
+            }
         }
         else
         {

@@ -73,7 +73,7 @@ public class WallSegmentation : MonoBehaviour
     [SerializeField] private RawImage debugImage;
     [SerializeField] private float processingInterval = 0.3f;
     [SerializeField] private bool enableDebugLogs = true; // Добавлен флаг включения отладочных логов
-    [SerializeField] private bool debugPositioning = false; // Флаг для отладки позиционирования стен
+    [SerializeField] private bool debugPositioning = true; // Флаг для отладки позиционирования стен (включен по умолчанию)
     [SerializeField] private bool useARPlaneController = true; // Использовать ARPlaneController для управления плоскостями
     
     [Header("Wall Visualization")]
@@ -151,6 +151,9 @@ public class WallSegmentation : MonoBehaviour
             // Обычная задержка для инициализации AR
             StartCoroutine(DelayedFirstSegmentationUpdate());
         }
+
+        // Новый метод для принудительного включения отладочных настроек для всех визуализаторов плоскостей
+        EnableDebugForAllVisualizers();
     }
     
     // Дополнительный метод для импорта ONNX модели
@@ -1318,6 +1321,9 @@ public class WallSegmentation : MonoBehaviour
         // Используем новый метод для применения маски к плоскостям
         int updatedCount = AssignMaskToARPlanes();
         
+        // Включаем отладочные настройки для всех визуализаторов
+        EnableDebugForAllVisualizers();
+        
         return updatedCount;
     }
     
@@ -1589,5 +1595,50 @@ public class WallSegmentation : MonoBehaviour
         
         // Запускаем обновление сегментации с задержкой
         StartCoroutine(DelayedSegmentationUpdate());
+    }
+
+    // Новый метод для принудительного включения отладочных настроек для всех визуализаторов плоскостей
+    private void EnableDebugForAllVisualizers()
+    {
+        // Получаем ссылку на ARPlaneManager
+        ARPlaneManager planeManager = FindObjectOfType<ARPlaneManager>();
+        if (planeManager == null) return;
+        
+        if (enableDebugLogs)
+        {
+            Debug.Log("WallSegmentation: Принудительное включение отладочных настроек для всех визуализаторов плоскостей");
+        }
+        
+        // Проходим по всем текущим плоскостям
+        foreach (var plane in planeManager.trackables)
+        {
+            if (plane == null) continue;
+            
+            // Получаем все визуализаторы на плоскости
+            ARPlaneVisualizer[] visualizers = plane.GetComponentsInChildren<ARPlaneVisualizer>();
+            foreach (var visualizer in visualizers)
+            {
+                if (visualizer == null) continue;
+                
+                // Включаем отладочную визуализацию
+                visualizer.SetDebugMode(true);
+                
+                // Для вертикальных плоскостей также включаем расширение стен
+                if (IsVerticalPlane(plane))
+                {
+                    visualizer.SetExtendWalls(true);
+                    
+                    if (enableDebugLogs)
+                    {
+                        float angleWithUp = Vector3.Angle(plane.normal, Vector3.up);
+                        Debug.Log($"WallSegmentation: Настройка визуализатора для плоскости {plane.trackableId} " + 
+                                  $"(Нормаль: {plane.normal}, Угол с вертикалью: {angleWithUp}°)");
+                    }
+                }
+                
+                // Принудительно обновляем визуализацию
+                visualizer.UpdateVisual();
+            }
+        }
     }
 } 
