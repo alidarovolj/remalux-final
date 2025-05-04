@@ -10,8 +10,8 @@ using System.Linq;
 public class ModelInspector : MonoBehaviour
 {
     [Header("Model Source")]
-    [SerializeField] private NNModel embeddedModel; // Модель в редакторе Unity
-    [SerializeField] private string externalModelPath = "BiseNet.onnx"; // Путь к модели в StreamingAssets
+    [SerializeField] private NNModel modelAsset;
+    [SerializeField] private string modelPath = "Assets/Models/model.onnx";
 
     [Header("Debug Options")]
     [SerializeField] private bool logOnStart = true; // Выводить информацию при запуске
@@ -21,113 +21,97 @@ public class ModelInspector : MonoBehaviour
     {
         if (logOnStart)
         {
-            if (embeddedModel != null)
-            {
-                InspectEmbeddedModel();
-            }
-            else if (!string.IsNullOrEmpty(externalModelPath))
-            {
-                InspectExternalModel();
-            }
+            InspectModel();
         }
     }
 
-    /// <summary>
-    /// Инспектирует модель, встроенную через Unity Editor
-    /// </summary>
-    public void InspectEmbeddedModel()
+    public void InspectModel()
     {
-        if (embeddedModel == null)
-        {
-            Debug.LogError("Не назначена встроенная модель для инспекции");
-            return;
-        }
+        Model model = null;
 
-        try
+        // Пробуем загрузить модель из пути напрямую
+        try 
         {
-            Model model = ModelLoader.Load(embeddedModel);
-            InspectModelDetails(model, "Встроенная модель");
-        }
-        catch (System.Exception e)
-        {
-            Debug.LogError($"Ошибка загрузки встроенной модели: {e.Message}");
-        }
-    }
-
-    /// <summary>
-    /// Инспектирует модель из StreamingAssets
-    /// </summary>
-    public void InspectExternalModel()
-    {
-        string fullPath = Path.Combine(Application.streamingAssetsPath, externalModelPath);
-        if (!File.Exists(fullPath))
-        {
-            Debug.LogError($"Модель не найдена по пути: {fullPath}");
-            return;
-        }
-
-        try
-        {
-            // Загружаем ONNX-файл
-            byte[] onnxBytes = File.ReadAllBytes(fullPath);
-            
-            // Конвертируем ONNX в Barracuda-модель
-            ONNXModelConverter converter = new ONNXModelConverter(
+            var converter = new Unity.Barracuda.ONNX.ONNXModelConverter(
                 optimizeModel: true, 
-                treatErrorsAsWarnings: false, 
+                treatErrorsAsWarnings: true, 
                 forceArbitraryBatchSize: true);
             
-            Model model = converter.Convert(onnxBytes);
-            InspectModelDetails(model, $"Внешняя модель: {externalModelPath}");
+            byte[] onnxBytes = System.IO.File.ReadAllBytes(modelPath);
+            model = converter.Convert(onnxBytes);
+            Debug.Log("Модель загружена из файла: " + modelPath);
         }
         catch (System.Exception e)
         {
-            Debug.LogError($"Ошибка загрузки внешней модели: {e.Message}");
+            Debug.LogError("Ошибка при загрузке модели: " + e.Message);
+            
+            // Если не удалось загрузить из файла, пробуем использовать сериализованную модель
+            if (modelAsset != null)
+            {
+                model = ModelLoader.Load(modelAsset);
+                Debug.Log("Модель загружена из сериализованного ассета");
+            }
+            else
+            {
+                Debug.LogError("Не удалось загрузить модель ни из файла, ни из ассета");
+                return;
+            }
         }
-    }
 
-    /// <summary>
-    /// Анализирует и выводит информацию о модели
-    /// </summary>
-    private void InspectModelDetails(Model model, string modelName)
-    {
-        Debug.Log($"=== Информация о модели: {modelName} ===");
-        Debug.Log($"Входные тензоры: {string.Join(", ", model.inputs)}");
-        Debug.Log($"Выходные тензоры: {string.Join(", ", model.outputs)}");
-        Debug.Log($"Количество слоев: {model.layers.Count}");
-
-        if (logTensorShapes)
+        if (model == null)
         {
-            // Упрощённый подход: просто выводим имена тензоров без форм
-            Debug.Log("=== Список входных тензоров ===");
-            foreach (var inputName in model.inputs)
-            {
-                Debug.Log($"Вход: '{inputName}'");
-            }
+            Debug.LogError("Модель не загружена");
+            return;
+        }
 
-            Debug.Log("=== Список выходных тензоров ===");
-            foreach (var outputName in model.outputs)
-            {
-                Debug.Log($"Выход: '{outputName}'");
-            }
+        // Выводим общую информацию о модели
+        Debug.Log("=== Информация о модели ===");
+        Debug.Log($"Память (байт): {model.GetTensorByName("?").length * sizeof(float)}");
+        Debug.Log($"Всего слоев: {model.layers.Count}");
+        Debug.Log($"Всего входов: {model.inputs.Count}");
+        Debug.Log($"Всего выходов: {model.outputs.Count}");
 
-            // Выводим информацию о всех слоях модели
-            Debug.Log("=== Слои модели ===");
+        // Выводим информацию о входах
+        Debug.Log("\n=== Входы модели ===");
+        foreach (var input in model.inputs)
+        {
+            Debug.Log($"Имя: {input.name}");
+            Debug.Log($"Форма: {string.Join(",", input.shape)}");
+        }
+
+        // Выводим информацию о выходах
+        Debug.Log("\n=== Выходы модели ===");
+        foreach (var output in model.outputs)
+        {
+            Debug.Log($"Имя: {output}");
+            
+            // Ищем слой, соответствующий выходу
             foreach (var layer in model.layers)
             {
-                Debug.Log($"Слой: '{layer.name}', Тип: {layer.type}");
-                Debug.Log($"  Входы: {string.Join(", ", layer.inputs)}");
-                
-                // Проверяем, имеет ли layer выходы и выводим их имена
-                if (layer.outputs != null && layer.outputs.Length > 0)
+                if (layer.name == output)
                 {
-                    Debug.Log($"  Выходы: {string.Join(", ", layer.outputs)}");
-                    
-                    // Просто выводим информацию о количестве выходных тензоров
-                    Debug.Log($"    Количество выходных тензоров: {layer.outputs.Length}");
+                    Debug.Log($"Тип выходного слоя: {layer.type}");
+                    break;
                 }
             }
         }
+
+        // Выводим информацию о первых 10 слоях
+        Debug.Log("\n=== Слои модели (первые 10) ===");
+        for (int i = 0; i < Mathf.Min(10, model.layers.Count); i++)
+        {
+            var layer = model.layers[i];
+            Debug.Log($"Слой {i}: {layer.name}, Тип: {layer.type}");
+            Debug.Log($"  Входы: {string.Join(", ", layer.inputs)}");
+            Debug.Log($"  Выходы: {(layer.outputs != null ? layer.outputs.Length.ToString() : "0")} тензоров");
+        }
+
+        if (model.layers.Count > 10)
+        {
+            Debug.Log($"...и еще {model.layers.Count - 10} слоев...");
+        }
+        
+        Debug.Log("Инспекция модели завершена!");
     }
 
     /// <summary>
@@ -135,17 +119,6 @@ public class ModelInspector : MonoBehaviour
     /// </summary>
     public void InspectModelFromButton()
     {
-        if (embeddedModel != null)
-        {
-            InspectEmbeddedModel();
-        }
-        else if (!string.IsNullOrEmpty(externalModelPath))
-        {
-            InspectExternalModel();
-        }
-        else
-        {
-            Debug.LogWarning("Не назначена модель для инспекции");
-        }
+        InspectModel();
     }
 } 
