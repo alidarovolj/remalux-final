@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.XR.ARFoundation;
 using UnityEngine.UI;
+using System.Linq; // Для использования LINQ запросов
+using System;
 
 /// <summary>
 /// Демонстрационная реализация сегментации стен для отладки без использования моделей машинного обучения.
@@ -30,10 +32,10 @@ public class DemoWallSegmentation : MonoBehaviour
     void Start()
     {
         if (planeManager == null)
-            planeManager = Object.FindAnyObjectByType<ARPlaneManager>();
+            planeManager = UnityEngine.Object.FindAnyObjectByType<ARPlaneManager>();
             
         if (cameraManager == null)
-            cameraManager = Object.FindAnyObjectByType<ARCameraManager>();
+            cameraManager = UnityEngine.Object.FindAnyObjectByType<ARCameraManager>();
             
         // Подписываемся на события изменения плоскостей
         planeManager.planesChanged += OnPlanesChanged;
@@ -131,8 +133,97 @@ public class DemoWallSegmentation : MonoBehaviour
     // Проецируем плоскость на текстуру
     private void MarkPlaneOnTexture(ARPlane plane)
     {
-        // Получаем вершины плоскости
-        var mesh = plane.GetComponent<MeshFilter>().mesh;
+        Debug.Log($"MarkPlaneOnTexture: Начинаем обработку плоскости {plane.trackableId}");
+        
+        // Проверяем наличие компонента MeshFilter
+        MeshFilter meshFilter = plane.GetComponent<MeshFilter>();
+        Mesh mesh = null;
+        
+        // Проверяем наличие камеры
+        Camera mainCamera = Camera.main;
+        if (mainCamera == null)
+        {
+            // Если Camera.main не доступна, пробуем найти любую камеру
+            mainCamera = FindObjectOfType<Camera>();
+            if (mainCamera == null)
+            {
+                Debug.LogError("MarkPlaneOnTexture: Не найдена основная камера (Camera.main). Визуализация плоскостей невозможна.");
+                return;
+            }
+            else
+            {
+                Debug.LogWarning("MarkPlaneOnTexture: Camera.main не доступна, используется альтернативная камера.");
+            }
+        }
+        
+        if (meshFilter != null)
+        {
+            // Используем mesh из MeshFilter, если он есть
+            mesh = meshFilter.mesh;
+            Debug.Log($"MarkPlaneOnTexture: Найден MeshFilter на плоскости {plane.trackableId}");
+        }
+        else
+        {
+            try
+            {
+                Debug.Log($"MarkPlaneOnTexture: MeshFilter не найден, ищем альтернативы для плоскости {plane.trackableId}");
+                
+                // Если MeshFilter не найден, пробуем получить mesh через ARPlaneMeshVisualizer
+                ARPlaneMeshVisualizer planeMeshVisualizer = plane.GetComponent<ARPlaneMeshVisualizer>();
+                
+                // Если компонент не найден напрямую, ищем в дочерних объектах
+                if (planeMeshVisualizer == null)
+                {
+                    planeMeshVisualizer = plane.GetComponentInChildren<ARPlaneMeshVisualizer>();
+                    Debug.Log($"MarkPlaneOnTexture: Поиск ARPlaneMeshVisualizer в дочерних объектах: {(planeMeshVisualizer != null ? "найден" : "не найден")}");
+                }
+                else
+                {
+                    Debug.Log($"MarkPlaneOnTexture: ARPlaneMeshVisualizer найден непосредственно на плоскости");
+                }
+                
+                if (planeMeshVisualizer != null && planeMeshVisualizer.mesh != null)
+                {
+                    mesh = planeMeshVisualizer.mesh;
+                    Debug.Log($"MarkPlaneOnTexture: Использован mesh из ARPlaneMeshVisualizer для плоскости {plane.trackableId}, вершин: {mesh.vertexCount}");
+                }
+                
+                // Если и через ARPlaneMeshVisualizer не получилось, пробуем получить меш из дочерних объектов
+                if (mesh == null)
+                {
+                    Debug.Log($"MarkPlaneOnTexture: Mesh через ARPlaneMeshVisualizer не получен, ищем MeshFilter в дочерних объектах");
+                    
+                    // Проверяем, есть ли MeshFilter на дочерних объектах
+                    MeshFilter[] childMeshFilters = plane.GetComponentsInChildren<MeshFilter>();
+                    Debug.Log($"MarkPlaneOnTexture: Найдено {childMeshFilters.Length} MeshFilter компонентов в дочерних объектах");
+                    
+                    if (childMeshFilters.Length > 0 && childMeshFilters[0] != null && childMeshFilters[0].mesh != null)
+                    {
+                        mesh = childMeshFilters[0].mesh;
+                        Debug.Log($"MarkPlaneOnTexture: Использован mesh из дочернего MeshFilter для плоскости {plane.trackableId}, вершин: {mesh.vertexCount}");
+                    }
+                }
+                
+                // Если mesh все еще не доступен, создаем запасной меш
+                if (mesh == null || mesh.vertexCount == 0)
+                {
+                    Debug.LogWarning($"MarkPlaneOnTexture: Не удалось получить mesh для плоскости {plane.trackableId}, создаю запасной меш");
+                    mesh = CreateFallbackPlaneMesh(plane);
+                    
+                    if (mesh == null)
+                    {
+                        Debug.LogError($"MarkPlaneOnTexture: Не удалось создать даже запасной mesh для плоскости {plane.trackableId}");
+                        return;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"MarkPlaneOnTexture: Ошибка при попытке получить mesh: {ex.Message}");
+                return;
+            }
+        }
+        
         var vertices = mesh.vertices;
         var planeTransform = plane.transform;
         
@@ -147,7 +238,7 @@ public class DemoWallSegmentation : MonoBehaviour
             Vector3 worldPos = planeTransform.TransformPoint(vertex);
             
             // Проецируем из мировых координат в экранные
-            Vector3 screenPos = Camera.main.WorldToScreenPoint(worldPos);
+            Vector3 screenPos = mainCamera.WorldToScreenPoint(worldPos);
             
             if (screenPos.z > 0) // если точка перед камерой
             {
@@ -193,17 +284,24 @@ public class DemoWallSegmentation : MonoBehaviour
             }
         }
         
-        // Дополнительно - выделяем границы плоскости
-        var indices = mesh.triangles;
-        for (int i = 0; i < indices.Length; i += 3)
+        try
         {
-            var v1 = planeTransform.TransformPoint(vertices[indices[i]]);
-            var v2 = planeTransform.TransformPoint(vertices[indices[i+1]]);
-            var v3 = planeTransform.TransformPoint(vertices[indices[i+2]]);
-            
-            DrawLine(Camera.main.WorldToScreenPoint(v1), Camera.main.WorldToScreenPoint(v2), edgeColor);
-            DrawLine(Camera.main.WorldToScreenPoint(v2), Camera.main.WorldToScreenPoint(v3), edgeColor);
-            DrawLine(Camera.main.WorldToScreenPoint(v3), Camera.main.WorldToScreenPoint(v1), edgeColor);
+            // Дополнительно - выделяем границы плоскости
+            var indices = mesh.triangles;
+            for (int i = 0; i < indices.Length; i += 3)
+            {
+                var v1 = planeTransform.TransformPoint(vertices[indices[i]]);
+                var v2 = planeTransform.TransformPoint(vertices[indices[i+1]]);
+                var v3 = planeTransform.TransformPoint(vertices[indices[i+2]]);
+                
+                DrawLine(mainCamera.WorldToScreenPoint(v1), mainCamera.WorldToScreenPoint(v2), edgeColor);
+                DrawLine(mainCamera.WorldToScreenPoint(v2), mainCamera.WorldToScreenPoint(v3), edgeColor);
+                DrawLine(mainCamera.WorldToScreenPoint(v3), mainCamera.WorldToScreenPoint(v1), edgeColor);
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"MarkPlaneOnTexture: Ошибка при отрисовке треугольников: {ex.Message}");
         }
     }
     
@@ -290,6 +388,79 @@ public class DemoWallSegmentation : MonoBehaviour
         if (planeManager != null)
         {
             planeManager.planesChanged -= OnPlanesChanged;
+        }
+    }
+    
+    /// <summary>
+    /// Создает запасной простой меш для плоскости, если не удалось получить меш другими способами
+    /// </summary>
+    private Mesh CreateFallbackPlaneMesh(ARPlane plane)
+    {
+        Debug.Log($"DemoWallSegmentation: Создание запасного меша для плоскости {plane.trackableId}");
+        
+        try
+        {
+            // Создаем новый меш
+            Mesh mesh = new Mesh();
+            
+            // Получаем размеры плоскости
+            Vector2 size = plane.size;
+            float width = size.x;
+            float height = size.y;
+            
+            // Если размеры слишком малы, увеличиваем их
+            if (width < 0.1f) width = 0.1f;
+            if (height < 0.1f) height = 0.1f;
+            
+            // Создаем простой прямоугольник
+            Vector3[] vertices = new Vector3[4]
+            {
+                new Vector3(-width/2, 0, -height/2),
+                new Vector3(width/2, 0, -height/2),
+                new Vector3(width/2, 0, height/2),
+                new Vector3(-width/2, 0, height/2)
+            };
+            
+            // Индексы треугольников
+            int[] triangles = new int[6]
+            {
+                0, 1, 2,
+                0, 2, 3
+            };
+            
+            // UV координаты
+            Vector2[] uv = new Vector2[4]
+            {
+                new Vector2(0, 0),
+                new Vector2(1, 0),
+                new Vector2(1, 1),
+                new Vector2(0, 1)
+            };
+            
+            // Нормали (все смотрят вверх)
+            Vector3[] normals = new Vector3[4]
+            {
+                Vector3.up,
+                Vector3.up,
+                Vector3.up,
+                Vector3.up
+            };
+            
+            // Заполняем меш
+            mesh.vertices = vertices;
+            mesh.triangles = triangles;
+            mesh.uv = uv;
+            mesh.normals = normals;
+            
+            // Пересчитываем границы меша
+            mesh.RecalculateBounds();
+            
+            return mesh;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"DemoWallSegmentation: Ошибка при создании запасного меша: {ex.Message}");
+            return null;
         }
     }
 } 

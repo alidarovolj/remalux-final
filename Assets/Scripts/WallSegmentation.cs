@@ -113,7 +113,59 @@ public class WallSegmentation : MonoBehaviour
         {
             Debug.LogWarning($"Размер входных данных ({inputWidth}x{inputHeight}={inputWidth * inputHeight} пикселей) может быть слишком большим для модели. Рекомендуемый максимум: 256x256=65536 пикселей.");
         }
+
+        // Ждем инициализации AR-сессии перед загрузкой модели
+        StartCoroutine(WaitForARSessionTracking());
+    }
+
+    /// <summary>
+    /// Ожидает начала трекинга AR-сессии перед инициализацией сегментации
+    /// </summary>
+    private IEnumerator WaitForARSessionTracking()
+    {
+        ARSession arSession = FindObjectOfType<ARSession>();
         
+        if (arSession != null)
+        {
+            // Ждем, пока AR-сессия не перейдет в режим трекинга
+            float startTime = Time.time;
+            float maxWaitTime = 10f; // Максимальное время ожидания - 10 секунд
+            
+            Debug.Log("WallSegmentation: Ожидание инициализации AR-сессии...");
+            
+            while (ARSession.state != ARSessionState.SessionTracking && 
+                   (Time.time - startTime) < maxWaitTime)
+            {
+                Debug.Log($"WallSegmentation: Текущий статус AR-сессии: {ARSession.state}, причина отсутствия трекинга: {ARSession.notTrackingReason}");
+                yield return new WaitForSeconds(0.5f);
+            }
+            
+            if (ARSession.state == ARSessionState.SessionTracking)
+            {
+                Debug.Log("WallSegmentation: AR-сессия в режиме трекинга, начинаем инициализацию сегментации");
+            }
+            else
+            {
+                Debug.LogWarning($"WallSegmentation: Превышено время ожидания AR-сессии. Текущий статус: {ARSession.state}. Продолжаем инициализацию в демо-режиме.");
+                // Переключаемся в демо-режим при проблемах с AR-сессией
+                SwitchToDemoMode();
+            }
+        }
+        else
+        {
+            Debug.LogWarning("WallSegmentation: ARSession не найден в сцене! Продолжаем в демо-режиме.");
+            SwitchToDemoMode();
+        }
+        
+        // Продолжаем инициализацию после проверки статуса AR-сессии
+        ContinueInitialization();
+    }
+    
+    /// <summary>
+    /// Продолжает инициализацию после проверки AR-сессии
+    /// </summary>
+    private void ContinueInitialization()
+    {
         // Инициализируем текстуры с безопасными размерами по умолчанию
         int textureWidth = 256;
         int textureHeight = 256;
@@ -136,14 +188,6 @@ public class WallSegmentation : MonoBehaviour
         if (showDebugVisualisation && debugImage == null)
         {
             Debug.LogError("Включена визуализация отладки (showDebugVisualisation), но не назначен компонент debugImage!");
-        }
-        
-        // Проверяем размер входных данных и предупреждаем если они слишком большие
-        int totalPixels = inputWidth * inputHeight;
-        if (totalPixels > 65536)
-        {
-            Debug.LogWarning($"Размер входных данных ({inputWidth}x{inputHeight}={totalPixels}) может быть слишком большим для модели. " +
-                           "Рекомендуемый максимум: 256x256=65536 пикселей.");
         }
         
         // Загружаем нужную модель в зависимости от выбранного режима

@@ -92,7 +92,27 @@ public class ARWallPaintingApp : MonoBehaviour
     private IEnumerator InitializeApp()
     {
         // Ждем инициализации AR сессии
-        yield return new WaitForSeconds(0.5f);
+        float startTime = Time.time;
+        float maxWaitTime = 15.0f; // Увеличенное время ожидания - 15 секунд
+        
+        Debug.Log($"ARWallPaintingApp: Ожидание инициализации AR-сессии, текущий статус: {ARSession.state}");
+        
+        // Ждем, пока AR-сессия не перейдет в режим трекинга
+        while (ARSession.state != ARSessionState.SessionTracking && 
+               (Time.time - startTime) < maxWaitTime)
+        {
+            Debug.Log($"ARWallPaintingApp: Ожидание трекинга... Текущий статус: {ARSession.state}, причина отсутствия трекинга: {ARSession.notTrackingReason}");
+            yield return new WaitForSeconds(1.0f);
+        }
+        
+        if (ARSession.state == ARSessionState.SessionTracking)
+        {
+            Debug.Log("ARWallPaintingApp: AR-сессия в режиме трекинга, переходим к сканированию окружения");
+        }
+        else
+        {
+            Debug.LogWarning($"ARWallPaintingApp: Превышено время ожидания AR-сессии. Текущий статус: {ARSession.state}. Принудительно продолжаем инициализацию.");
+        }
         
         // Переходим к сканированию окружения
         SetAppState(AppState.ScanningEnvironment);

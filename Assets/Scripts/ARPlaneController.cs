@@ -1,6 +1,8 @@
 using UnityEngine;
 using UnityEngine.XR.ARFoundation;
 using System.Collections;
+using System; // Для доступа к системным типам
+using System.Linq; // Для использования LINQ
 
 /// <summary>
 /// Контроллер для управления AR плоскостями
@@ -156,6 +158,50 @@ public class ARPlaneController : MonoBehaviour
             MeshFilter meshFilter = visualizerObj.AddComponent<MeshFilter>();
             MeshRenderer meshRenderer = visualizerObj.AddComponent<MeshRenderer>();
             visualizer = visualizerObj.AddComponent<ARPlaneVisualizer>();
+            
+            // Копируем меш из ARPlane, находя его с помощью компонента ARPlaneMeshVisualizer
+            ARPlaneMeshVisualizer planeMeshVisualizer = plane.GetComponent<ARPlaneMeshVisualizer>();
+
+            // Если компонент не найден напрямую, ищем в дочерних объектах
+            if (planeMeshVisualizer == null)
+            {
+                planeMeshVisualizer = plane.GetComponentInChildren<ARPlaneMeshVisualizer>();
+            }
+
+            try
+            {
+                if (planeMeshVisualizer != null && planeMeshVisualizer.mesh != null && planeMeshVisualizer.mesh.vertexCount > 0)
+                {
+                    Mesh meshCopy = new Mesh();
+                    meshCopy.vertices = planeMeshVisualizer.mesh.vertices;
+                    meshCopy.triangles = planeMeshVisualizer.mesh.triangles;
+                    meshCopy.normals = planeMeshVisualizer.mesh.normals;
+                    meshCopy.uv = planeMeshVisualizer.mesh.uv;
+                    meshFilter.mesh = meshCopy;
+                    
+                    if (enableDebugLogs)
+                    {
+                        Debug.Log($"ARPlaneController: Скопирован меш для плоскости {plane.trackableId} с {planeMeshVisualizer.mesh.vertexCount} вершинами");
+                    }
+                }
+                else
+                {
+                    Debug.LogWarning($"ARPlaneController: Не удалось получить меш для плоскости {plane.trackableId}, создаю запасной меш");
+                    
+                    // Создаем запасной меш
+                    Mesh fallbackMesh = CreateFallbackPlaneMesh(plane);
+                    meshFilter.mesh = fallbackMesh;
+                    
+                    if (enableDebugLogs)
+                    {
+                        Debug.Log($"ARPlaneController: Создан запасной меш для плоскости {plane.trackableId}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"ARPlaneController: Ошибка при попытке получить mesh: {ex.Message}");
+            }
             
             // Устанавливаем флаг
             visualizer.SetAsSegmentationPlane(false);
@@ -468,5 +514,70 @@ public class ARPlaneController : MonoBehaviour
         {
             Debug.Log($"ARPlaneController: {(enableDebug ? "Включен" : "Отключен")} режим отладки позиционирования для {updatedCount} визуализаторов");
         }
+    }
+    
+    /// <summary>
+    /// Создает запасной простой меш для плоскости, если не удалось получить меш другими способами
+    /// </summary>
+    private Mesh CreateFallbackPlaneMesh(ARPlane plane)
+    {
+        Debug.Log($"ARPlaneController: Создание запасного меша для плоскости {plane.trackableId}");
+        
+        // Создаем новый меш
+        Mesh mesh = new Mesh();
+        
+        // Получаем размеры плоскости
+        Vector2 size = plane.size;
+        float width = size.x;
+        float height = size.y;
+        
+        // Если размеры слишком малы, увеличиваем их
+        if (width < 0.1f) width = 0.1f;
+        if (height < 0.1f) height = 0.1f;
+        
+        // Создаем простой прямоугольник
+        Vector3[] vertices = new Vector3[4]
+        {
+            new Vector3(-width/2, 0, -height/2),
+            new Vector3(width/2, 0, -height/2),
+            new Vector3(width/2, 0, height/2),
+            new Vector3(-width/2, 0, height/2)
+        };
+        
+        // Индексы треугольников
+        int[] triangles = new int[6]
+        {
+            0, 1, 2,
+            0, 2, 3
+        };
+        
+        // UV координаты
+        Vector2[] uv = new Vector2[4]
+        {
+            new Vector2(0, 0),
+            new Vector2(1, 0),
+            new Vector2(1, 1),
+            new Vector2(0, 1)
+        };
+        
+        // Нормали (все смотрят вверх)
+        Vector3[] normals = new Vector3[4]
+        {
+            Vector3.up,
+            Vector3.up,
+            Vector3.up,
+            Vector3.up
+        };
+        
+        // Заполняем меш
+        mesh.vertices = vertices;
+        mesh.triangles = triangles;
+        mesh.uv = uv;
+        mesh.normals = normals;
+        
+        // Пересчитываем границы меша
+        mesh.RecalculateBounds();
+        
+        return mesh;
     }
 } 

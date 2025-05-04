@@ -249,6 +249,24 @@ public static class SetupUtility
         {
             GameObject arSessionObj = new GameObject("AR Session");
             arSession = arSessionObj.AddComponent<ARSession>();
+            
+            // Добавляем помощник конфигурации
+            ARSession_ConfigHelper configHelper = arSessionObj.AddComponent<ARSession_ConfigHelper>();
+            
+            // Устанавливаем глобальный параметр runInBackground
+            Application.runInBackground = true;
+            
+            Debug.Log("Добавлен ARSession_ConfigHelper для корректной настройки сессии");
+        }
+        else if (!arSession.gameObject.GetComponent<ARSession_ConfigHelper>())
+        {
+            // Добавляем помощник конфигурации, если его нет
+            ARSession_ConfigHelper configHelper = arSession.gameObject.AddComponent<ARSession_ConfigHelper>();
+            
+            // Устанавливаем глобальный параметр runInBackground
+            Application.runInBackground = true;
+            
+            Debug.Log("Добавлен ARSession_ConfigHelper для корректной настройки сессии");
         }
         
         // Проверяем, есть ли AR Session Origin
