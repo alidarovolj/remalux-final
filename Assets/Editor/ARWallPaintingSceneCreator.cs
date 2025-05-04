@@ -599,8 +599,65 @@ public class ARWallPaintingSceneCreator : Editor
             Debug.LogWarning("RawImage не найден для WallSegmentation. Отладочная визуализация не будет работать.");
         }
         
-        // Добавляем также компонент DemoWallSegmentation для отладки
-        DemoWallSegmentation demoWallSegmentation = segmentationManagerObj.AddComponent<DemoWallSegmentation>();
+        // В релизных сборках можно отключить демо-компоненты 
+        bool isDebugBuild = true; // В релизе заменить на false
+#if DEVELOPMENT_BUILD || UNITY_EDITOR
+        isDebugBuild = true;
+#endif
+        
+        // Добавляем DemoWallSegmentation только в режиме отладки
+        if (isDebugBuild)
+        {
+            // Добавляем также компонент DemoWallSegmentation для отладки
+            DemoWallSegmentation demoWallSegmentation = segmentationManagerObj.AddComponent<DemoWallSegmentation>();
+            
+            // Назначаем AR плоскости и камеру для демо-сегментации
+            ARPlaneManager planeManager = arRoot.GetComponentInChildren<ARPlaneManager>();
+            if (planeManager != null)
+            {
+                SerializedObject serializedDemoPlaneRef = new SerializedObject(demoWallSegmentation);
+                SerializedProperty planeManagerProp = serializedDemoPlaneRef.FindProperty("planeManager");
+                if (planeManagerProp != null)
+                {
+                    planeManagerProp.objectReferenceValue = planeManager;
+                    serializedDemoPlaneRef.ApplyModifiedProperties();
+                }
+            }
+            
+            // Назначаем ARCameraManager для демо-сегментации
+            if (xrOrigin != null && xrOrigin.Camera != null)
+            {
+                ARCameraManager cameraManager = xrOrigin.Camera.GetComponent<ARCameraManager>();
+                if (cameraManager != null)
+                {
+                    SerializedObject serializedDemoCamera = new SerializedObject(demoWallSegmentation);
+                    SerializedProperty cameraManagerProp = serializedDemoCamera.FindProperty("cameraManager");
+                    if (cameraManagerProp != null)
+                    {
+                        cameraManagerProp.objectReferenceValue = cameraManager;
+                        serializedDemoCamera.ApplyModifiedProperties();
+                    }
+                }
+            }
+            
+            // Назначаем RawImage для отображения демо-сегментации
+            if (debugImage != null)
+            {
+                SerializedObject serializedDemoDebug = new SerializedObject(demoWallSegmentation);
+                SerializedProperty debugImageProp = serializedDemoDebug.FindProperty("debugImage");
+                if (debugImageProp != null)
+                {
+                    debugImageProp.objectReferenceValue = debugImage;
+                    serializedDemoDebug.ApplyModifiedProperties();
+                }
+            }
+            
+            Debug.Log("Добавлен компонент DemoWallSegmentation для отладки");
+        }
+        else
+        {
+            Debug.Log("Компонент DemoWallSegmentation пропущен в релизной сборке");
+        }
         
         // Добавляем компонент OpenCVProcessor для постобработки сегментации
         OpenCVProcessor openCVProcessor = segmentationManagerObj.AddComponent<OpenCVProcessor>();
@@ -612,47 +669,6 @@ public class ARWallPaintingSceneCreator : Editor
         {
             serializedOpenCV.FindProperty("debugOutputImage").objectReferenceValue = debugImage;
             serializedOpenCV.ApplyModifiedProperties();
-        }
-        
-        // Назначаем AR плоскости и камеру для демо-сегментации
-        ARPlaneManager planeManager = arRoot.GetComponentInChildren<ARPlaneManager>();
-        if (planeManager != null)
-        {
-            SerializedObject serializedDemoPlaneRef = new SerializedObject(demoWallSegmentation);
-            SerializedProperty planeManagerProp = serializedDemoPlaneRef.FindProperty("planeManager");
-            if (planeManagerProp != null)
-            {
-                planeManagerProp.objectReferenceValue = planeManager;
-                serializedDemoPlaneRef.ApplyModifiedProperties();
-            }
-        }
-        
-        // Назначаем ARCameraManager для демо-сегментации
-        if (xrOrigin != null && xrOrigin.Camera != null)
-        {
-            ARCameraManager cameraManager = xrOrigin.Camera.GetComponent<ARCameraManager>();
-            if (cameraManager != null)
-            {
-                SerializedObject serializedDemoCamera = new SerializedObject(demoWallSegmentation);
-                SerializedProperty cameraManagerProp = serializedDemoCamera.FindProperty("cameraManager");
-                if (cameraManagerProp != null)
-                {
-                    cameraManagerProp.objectReferenceValue = cameraManager;
-                    serializedDemoCamera.ApplyModifiedProperties();
-                }
-            }
-        }
-        
-        // Назначаем RawImage для отображения демо-сегментации
-        if (debugImage != null)
-        {
-            SerializedObject serializedDemoDebug = new SerializedObject(demoWallSegmentation);
-            SerializedProperty debugImageProp = serializedDemoDebug.FindProperty("debugImage");
-            if (debugImageProp != null)
-            {
-                debugImageProp.objectReferenceValue = debugImage;
-                serializedDemoDebug.ApplyModifiedProperties();
-            }
         }
     }
     

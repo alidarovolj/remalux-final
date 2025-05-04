@@ -137,8 +137,19 @@ public class WallSegmentation : MonoBehaviour
         // Подписываемся на событие обнаружения новых плоскостей
         SubscribeToPlaneEvents();
         
-        // Через небольшую задержку запускаем первое обновление сегментации
-        StartCoroutine(DelayedFirstSegmentationUpdate());
+        // Автоматический запуск сегментации при запуске приложения
+        if (currentMode == SegmentationMode.ExternalModel && !forceDemoMode)
+        {
+            Debug.Log("WallSegmentation: Запуск автоматической сегментации в режиме ExternalModel...");
+            
+            // Через небольшую задержку запускаем первую сегментацию
+            StartCoroutine(DelayedFirstSegmentationUpdate(3.0f));
+        }
+        else
+        {
+            // Обычная задержка для инициализации AR
+            StartCoroutine(DelayedFirstSegmentationUpdate());
+        }
     }
     
     // Дополнительный метод для импорта ONNX модели
@@ -1150,6 +1161,29 @@ public class WallSegmentation : MonoBehaviour
         yield return new WaitForSeconds(2.0f);
         UpdatePlanesSegmentationStatus();
         Debug.Log("WallSegmentation: Выполнено первое обновление статуса сегментации");
+    }
+
+    // Перегрузка метода с указанием времени задержки
+    private IEnumerator DelayedFirstSegmentationUpdate(float delayTime)
+    {
+        Debug.Log($"WallSegmentation: Ожидание {delayTime} сек для инициализации плоскостей и модели...");
+        
+        // Ждем указанное время после инициализации
+        yield return new WaitForSeconds(delayTime);
+        
+        // Запускаем принудительную обработку одного кадра камеры
+        if (!useDemoMode && worker != null)
+        {
+            Debug.Log("WallSegmentation: Запуск принудительной обработки кадра...");
+            yield return StartCoroutine(ProcessCameraImage());
+            
+            // Дополнительная задержка для завершения обработки
+            yield return new WaitForSeconds(0.5f);
+        }
+        
+        // Обновляем статус всех плоскостей
+        int updatedCount = UpdatePlanesSegmentationStatus();
+        Debug.Log($"WallSegmentation: Выполнено первое обновление статуса сегментации, обработано {updatedCount} плоскостей");
     }
 
     // Корутина для задержки обновления сегментации

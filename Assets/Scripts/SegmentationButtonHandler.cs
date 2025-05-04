@@ -96,18 +96,33 @@ public class SegmentationButtonHandler : MonoBehaviour
                 yield return new WaitForSeconds(0.5f);
             }
             
-            // Запускаем обработку кадра камеры
+            // Запускаем обработку кадра камеры с корректным запуском корутины
             var processFramesMethod = wallSegmentation.GetType().GetMethod("ProcessCameraImage", 
                 System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
                 
             if (processFramesMethod != null)
             {
                 Debug.Log("Запуск обработки кадра камеры для сегментации...");
-                processFramesMethod.Invoke(wallSegmentation, null);
+                // Получаем IEnumerator из метода и запускаем его как корутину
+                IEnumerator coroutine = (IEnumerator)processFramesMethod.Invoke(wallSegmentation, null);
+                if (coroutine != null)
+                {
+                    // Запускаем полученную корутину через StartCoroutine
+                    wallSegmentation.StartCoroutine(coroutine);
+                    Debug.Log("Корутина ProcessCameraImage успешно запущена");
+                }
+                else
+                {
+                    Debug.LogError("Не удалось получить корутину из метода ProcessCameraImage");
+                }
+            }
+            else
+            {
+                Debug.LogError("Метод ProcessCameraImage не найден в классе WallSegmentation");
             }
             
             // Даем время на обработку
-            yield return new WaitForSeconds(0.5f);
+            yield return new WaitForSeconds(1.0f); // Увеличиваем время ожидания
             
             // Обновляем статус плоскостей
             updatedCount = wallSegmentation.UpdatePlanesSegmentationStatus();
