@@ -352,4 +352,24 @@ public class ARPlaneVisualizer : MonoBehaviour
     {
         return isSegmentationPlane;
     }
+    
+    /// <summary>
+    /// Устанавливает режим отладки для визуализатора
+    /// </summary>
+    /// <param name="enableDebug">True - включить отладочную визуализацию, False - выключить</param>
+    public void SetDebugMode(bool enableDebug)
+    {
+        debugPositioning = enableDebug;
+        UpdateVisual();
+    }
+    
+    /// <summary>
+    /// Устанавливает флаг расширения стен
+    /// </summary>
+    /// <param name="extend">True - расширять стены, False - использовать оригинальные размеры</param>
+    public void SetExtendWalls(bool extend)
+    {
+        extendWalls = extend;
+        UpdateVisual();
+    }
 } 

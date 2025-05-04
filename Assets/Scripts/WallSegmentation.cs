@@ -73,6 +73,7 @@ public class WallSegmentation : MonoBehaviour
     [SerializeField] private RawImage debugImage;
     [SerializeField] private float processingInterval = 0.3f;
     [SerializeField] private bool enableDebugLogs = true; // Добавлен флаг включения отладочных логов
+    [SerializeField] private bool debugPositioning = false; // Флаг для отладки позиционирования стен
     [SerializeField] private bool useARPlaneController = true; // Использовать ARPlaneController для управления плоскостями
     
     [Header("Wall Visualization")]
@@ -985,8 +986,72 @@ public class WallSegmentation : MonoBehaviour
         // Используем более низкий порог для SegFormer
         float wallThreshold = 0.2f;
         
-        // Перебираем все вершины меша
-        for (int i = 0; i < vertices.Length; i++)
+        // Добавляем отладочную информацию
+        if (enableDebugLogs && debugPositioning)
+        {
+            Debug.Log($"Проверка плоскости {plane.trackableId}: размер маски сегментации {segmentationTexture.width}x{segmentationTexture.height}, " +
+                     $"размер экрана {Screen.width}x{Screen.height}, вершин в меше: {vertices.Length}");
+        }
+        
+        // Для отладки - тестовые точки центра плоскости
+        Vector3 planeCenter = plane.transform.TransformPoint(Vector3.zero);
+        Vector3 screenPosCenter = arCamera.WorldToScreenPoint(planeCenter);
+        
+        if (enableDebugLogs && debugPositioning)
+        {
+            Debug.Log($"Центр плоскости: мировая позиция {planeCenter}, экранная позиция {screenPosCenter}");
+            
+            // Отладочные лучи от камеры до центра плоскости
+            Debug.DrawLine(arCamera.transform.position, planeCenter, Color.yellow, 1.0f);
+        }
+        
+        // Расширенная проверка по нескольким стратегическим точкам плоскости, не только вершинам
+        Vector3[] strategicPoints = new Vector3[5]; // Центр + 4 направления
+        strategicPoints[0] = Vector3.zero; // Центр
+        
+        // Вычисляем крайние точки плоскости относительно центра
+        Vector3 boundsExtents = planeMesh.bounds.extents;
+        strategicPoints[1] = new Vector3(boundsExtents.x, 0, 0); // Вправо от центра
+        strategicPoints[2] = new Vector3(-boundsExtents.x, 0, 0); // Влево от центра
+        strategicPoints[3] = new Vector3(0, boundsExtents.y, 0); // Вверх от центра
+        strategicPoints[4] = new Vector3(0, -boundsExtents.y, 0); // Вниз от центра
+        
+        // Проверяем стратегические точки
+        foreach (var localPoint in strategicPoints)
+        {
+            Vector3 worldPos = plane.transform.TransformPoint(localPoint);
+            Vector3 screenPos = arCamera.WorldToScreenPoint(worldPos);
+            
+            // Пропускаем точки за камерой
+            if (screenPos.z <= 0)
+                continue;
+                
+            totalVertices++;
+            
+            // Преобразуем экранные координаты в координаты текстуры сегментации
+            int texX = Mathf.RoundToInt((screenPos.x / Screen.width) * segmentationTexture.width);
+            int texY = Mathf.RoundToInt((screenPos.y / Screen.height) * segmentationTexture.height);
+            
+            // Проверяем, находится ли точка в пределах текстуры
+            if (texX >= 0 && texX < segmentationTexture.width && texY >= 0 && texY < segmentationTexture.height)
+            {
+                // Получаем цвет пикселя и проверяем, относится ли он к классу стены
+                Color pixelColor = segmentationTexture.GetPixel(texX, texY);
+                
+                // Для модели SegFormer проверяем канал синего (наша маркировка стен)
+                if (pixelColor.b > wallThreshold)
+                {
+                    maskedVertices++;
+                    if (enableDebugLogs && debugPositioning)
+                    {
+                        Debug.Log($"Найдена точка стены: texX={texX}, texY={texY}, цвет={pixelColor}, стратег. точка={localPoint}");
+                    }
+                }
+            }
+        }
+        
+        // Перебираем все вершины меша для полного покрытия
+        for (int i = 0; i < vertices.Length; i += 5) // Проверяем каждую пятую вершину для оптимизации
         {
             Vector3 worldPos = plane.transform.TransformPoint(vertices[i]);
             Vector3 screenPos = arCamera.WorldToScreenPoint(worldPos);
@@ -1007,7 +1072,7 @@ public class WallSegmentation : MonoBehaviour
                 // Получаем цвет пикселя и проверяем, относится ли он к классу стены
                 Color pixelColor = segmentationTexture.GetPixel(texX, texY);
                 
-                // Для модели SegFormer проверяем только синий канал (наша маркировка стен)
+                // Для модели SegFormer проверяем канал синего (наша маркировка стен)
                 if (pixelColor.b > wallThreshold)
                 {
                     maskedVertices++;
@@ -1019,9 +1084,12 @@ public class WallSegmentation : MonoBehaviour
         float coverage = totalVertices > 0 ? (float)maskedVertices / totalVertices : 0;
         
         // Отладка
-        if (totalVertices > 0 && coverage > 0.1f)
+        if (totalVertices > 0)
         {
-            Debug.Log($"Плоскость {plane.trackableId}: покрытие маской = {coverage:F2} ({maskedVertices}/{totalVertices})");
+            if (enableDebugLogs)
+            {
+                Debug.Log($"Плоскость {plane.trackableId}: покрытие маской = {coverage:F2} ({maskedVertices}/{totalVertices})");
+            }
         }
         
         // Возвращаем true, если покрытие превышает минимальный порог
@@ -1052,8 +1120,49 @@ public class WallSegmentation : MonoBehaviour
         // Используем более низкий порог для SegFormer
         float wallThreshold = 0.2f;
         
-        // Перебираем все вершины меша
-        for (int i = 0; i < vertices.Length; i++)
+        // Проверка стратегических точек плоскости (аналогично IsPlaneInSegmentationMask)
+        Vector3[] strategicPoints = new Vector3[5]; // Центр + 4 направления
+        strategicPoints[0] = Vector3.zero; // Центр
+        
+        // Вычисляем крайние точки плоскости относительно центра
+        Vector3 boundsExtents = planeMesh.bounds.extents;
+        strategicPoints[1] = new Vector3(boundsExtents.x, 0, 0); // Вправо от центра
+        strategicPoints[2] = new Vector3(-boundsExtents.x, 0, 0); // Влево от центра
+        strategicPoints[3] = new Vector3(0, boundsExtents.y, 0); // Вверх от центра
+        strategicPoints[4] = new Vector3(0, -boundsExtents.y, 0); // Вниз от центра
+        
+        // Проверяем стратегические точки
+        foreach (var localPoint in strategicPoints)
+        {
+            Vector3 worldPos = plane.transform.TransformPoint(localPoint);
+            Vector3 screenPos = arCamera.WorldToScreenPoint(worldPos);
+            
+            // Пропускаем точки за камерой
+            if (screenPos.z <= 0)
+                continue;
+                
+            totalVertices++;
+            
+            // Преобразуем экранные координаты в координаты текстуры сегментации
+            int texX = Mathf.RoundToInt((screenPos.x / Screen.width) * segmentationTexture.width);
+            int texY = Mathf.RoundToInt((screenPos.y / Screen.height) * segmentationTexture.height);
+            
+            // Проверяем, находится ли точка в пределах текстуры
+            if (texX >= 0 && texX < segmentationTexture.width && texY >= 0 && texY < segmentationTexture.height)
+            {
+                // Получаем цвет пикселя и проверяем, относится ли он к классу стены
+                Color pixelColor = segmentationTexture.GetPixel(texX, texY);
+                
+                // Для модели SegFormer проверяем канал синего (наша маркировка стен)
+                if (pixelColor.b > wallThreshold)
+                {
+                    maskedVertices++;
+                }
+            }
+        }
+        
+        // Перебираем все вершины меша для полного покрытия
+        for (int i = 0; i < vertices.Length; i += 5) // Проверяем каждую пятую вершину для оптимизации
         {
             Vector3 worldPos = plane.transform.TransformPoint(vertices[i]);
             Vector3 screenPos = arCamera.WorldToScreenPoint(worldPos);
@@ -1074,7 +1183,7 @@ public class WallSegmentation : MonoBehaviour
                 // Получаем цвет пикселя и проверяем, относится ли он к классу стены
                 Color pixelColor = segmentationTexture.GetPixel(texX, texY);
                 
-                // Для модели SegFormer проверяем только синий канал (наша маркировка стен)
+                // Для модели SegFormer проверяем канал синего (наша маркировка стен)
                 if (pixelColor.b > wallThreshold)
                 {
                     maskedVertices++;
@@ -1240,33 +1349,60 @@ public class WallSegmentation : MonoBehaviour
             }
         }
         
-        // Проходим по всем обнаруженным плоскостям
+        if (enableDebugLogs)
+        {
+            Debug.Log($"WallSegmentation: Начинаем обработку плоскостей с маской сегментации. Режим: {currentMode}, UseDemoMode: {useDemoMode}");
+        }
+        
+        // Список для проверки конфликтующих областей
+        Dictionary<ARPlane, float> planeCoverages = new Dictionary<ARPlane, float>();
+        
+        // Первый проход - определяем степень покрытия каждой плоскости маской сегментации
         foreach (var plane in planeManager.trackables)
         {
-            // Проверяем, является ли плоскость стеной по маске сегментации
-            bool isWall = IsPlaneInSegmentationMask(plane, 0.3f); // Порог 30%
+            // Получаем процент покрытия плоскости маской сегментации
+            float coverage = GetPlaneCoverageByMask(plane);
             
+            // Сохраняем информацию о покрытии
+            planeCoverages[plane] = coverage;
+            
+            if (enableDebugLogs && coverage > 0.1f)
+            {
+                Debug.Log($"WallSegmentation: Плоскость {plane.trackableId} имеет покрытие {coverage:F2}");
+            }
+        }
+        
+        // Второй проход - отфильтровываем плоскости с наибольшим покрытием и отмечаем их как стены
+        foreach (var plane in planeManager.trackables)
+        {
             // Проверяем ориентацию плоскости
             bool isVerticalPlane = IsVerticalPlane(plane);
             
-            // Если это стена по сегментации и плоскость вертикальная, увеличиваем счетчик
-            if (isWall && isVerticalPlane)
+            // Получаем процент покрытия плоскости маской из словаря
+            float coverage;
+            planeCoverages.TryGetValue(plane, out coverage);
+            
+            // Определяем, является ли плоскость стеной
+            bool isWall = coverage >= 0.3f && isVerticalPlane;
+            
+            // Для вертикальных плоскостей с хорошим покрытием - отмечаем как стены
+            if (isWall)
             {
                 wallCount++;
                 if (enableDebugLogs)
                 {
                     float angleWithUp = Vector3.Angle(plane.normal, Vector3.up);
                     Debug.Log($"WallSegmentation: Плоскость {plane.trackableId} определена как стена " +
-                              $"(Выравнивание: {plane.alignment}, Нормаль: {plane.normal}, Угол с вертикалью: {angleWithUp}°)");
+                              $"(Выравнивание: {plane.alignment}, Нормаль: {plane.normal}, Угол с вертикалью: {angleWithUp}°, Покрытие: {coverage:F2})");
                 }
             }
-            else if (isWall && !isVerticalPlane)
+            else if (coverage >= 0.3f && !isVerticalPlane)
             {
                 // Подозрительная ситуация - маска показывает стену, но плоскость не вертикальная
                 if (enableDebugLogs)
                 {
                     float angleWithUp = Vector3.Angle(plane.normal, Vector3.up);
-                    Debug.LogWarning($"WallSegmentation: Плоскость {plane.trackableId} определена как стена по сегментации, " +
+                    Debug.LogWarning($"WallSegmentation: Плоскость {plane.trackableId} определена как стена по сегментации (покрытие {coverage:F2}), " +
                                      $"но имеет невертикальное выравнивание {plane.alignment}! Угол с вертикалью: {angleWithUp}°");
                 }
                 
@@ -1277,12 +1413,9 @@ public class WallSegmentation : MonoBehaviour
                     {
                         Debug.Log($"WallSegmentation: Плоскость {plane.trackableId} принудительно считаем стеной из-за вертикальной нормали");
                     }
-                    // Оставляем isWall = true
+                    // Отмечаем как стену
+                    isWall = true;
                     wallCount++;
-                }
-                else
-                {
-                    isWall = false; // Не обрабатываем как стену
                 }
             }
             
@@ -1294,7 +1427,20 @@ public class WallSegmentation : MonoBehaviour
             {
                 foreach (var visualizer in visualizers)
                 {
+                    // Устанавливаем текущую плоскость как стену
                     visualizer.SetAsSegmentationPlane(isWall);
+                    
+                    // Обновляем дополнительные настройки визуализатора
+                    if (isWall)
+                    {
+                        // Включаем отладочную визуализацию только если debugPositioning включен
+                        bool shouldShowDebug = debugPositioning && enableDebugLogs;
+                        visualizer.SetDebugMode(shouldShowDebug);
+                        
+                        // Расширяем стены, если это стандартные стены
+                        visualizer.SetExtendWalls(true);
+                    }
+                    
                     updatedCount++;
                 }
             }
@@ -1303,6 +1449,12 @@ public class WallSegmentation : MonoBehaviour
             {
                 planeController.SetSegmentationFlagForPlane(plane, isWall);
                 updatedCount++;
+            }
+            
+            // Применяем коррекцию масштаба для стен
+            if (isWall)
+            {
+                AdjustPlaneScaleAfterSegmentation(plane, isWall);
             }
         }
         
@@ -1360,6 +1512,69 @@ public class WallSegmentation : MonoBehaviour
             if (updateWallsMethod != null)
             {
                 updateWallsMethod.Invoke(debugManager, new object[] { wallCount });
+            }
+        }
+    }
+    
+    /// <summary>
+    /// Корректирует масштаб и позицию плоскостей AR после сегментации
+    /// </summary>
+    /// <param name="plane">Обрабатываемая плоскость</param>
+    /// <param name="isWall">Является ли плоскость стеной</param>
+    private void AdjustPlaneScaleAfterSegmentation(ARPlane plane, bool isWall)
+    {
+        if (plane == null) return;
+        
+        // Только для стен выполняем дополнительную коррекцию
+        if (!isWall) return;
+        
+        // Получаем все визуализаторы плоскости
+        ARPlaneVisualizer[] visualizers = plane.GetComponentsInChildren<ARPlaneVisualizer>();
+        foreach (var visualizer in visualizers)
+        {
+            if (visualizer == null) continue;
+            
+            // Получаем текущий транформ
+            Transform visTrans = visualizer.transform;
+            
+            // Для вертикальных стен корректируем масштаб
+            if (IsVerticalPlane(plane))
+            {
+                // Проверяем возможные проблемы с масштабом
+                if (visTrans.localScale.y < 1.0f)
+                {
+                    // Минимальная высота стены 2 метра
+                    visTrans.localScale = new Vector3(
+                        visTrans.localScale.x,
+                        Mathf.Max(2.0f, visTrans.localScale.y),
+                        visTrans.localScale.z
+                    );
+                    
+                    if (enableDebugLogs)
+                    {
+                        Debug.Log($"WallSegmentation: Коррекция высоты стены для плоскости {plane.trackableId} до {visTrans.localScale.y}");
+                    }
+                }
+                
+                // Корректируем позицию стены, чтобы нижний край был на уровне пола
+                Vector3 position = visTrans.position;
+                
+                // Вычисляем высоту стены относительно пола
+                // Высчитываем расстояние от камеры до пола
+                float cameraHeight = arCamera.transform.position.y;
+                
+                // Корректируем позицию, чтобы нижняя точка стены была на уровне пола
+                position.y = cameraHeight - (visTrans.localScale.y / 2);
+                
+                // Применяем позицию с небольшим смещением от вертикали, чтобы не было пересечений с полом
+                position.y += 0.05f; // 5 см над полом
+                
+                if (enableDebugLogs && debugPositioning)
+                {
+                    Debug.Log($"WallSegmentation: Коррекция позиции стены {plane.trackableId} - старая Y: {visTrans.position.y}, новая Y: {position.y}");
+                }
+                
+                visTrans.position = position;
             }
         }
     }
