@@ -536,9 +536,18 @@ public class ARWallPaintingSceneCreator : Editor
 
         // Устанавливаем индекс класса стены для ADE20K датасета
         serializedWallSegmentation.FindProperty("wallClassIndex").intValue = 1;
-
+        
+        // Отключаем принудительный демо-режим
+        serializedWallSegmentation.FindProperty("forceDemoMode").boolValue = false;
+        
+        // Включаем отладочные логи
+        serializedWallSegmentation.FindProperty("enableDebugLogs").boolValue = true;
+        
         // Применяем настройки
         serializedWallSegmentation.ApplyModifiedProperties();
+        
+        // Выводим сообщение о настройке
+        Debug.Log("WallSegmentation настроен на режим ExternalModel с моделью model.onnx");
         
         // Находим AR камеру и назначаем ее
         XROrigin xrOrigin = arRoot.GetComponentInChildren<XROrigin>();
@@ -590,7 +599,7 @@ public class ARWallPaintingSceneCreator : Editor
             Debug.LogWarning("RawImage не найден для WallSegmentation. Отладочная визуализация не будет работать.");
         }
         
-        // Добавляем также компонент DemoWallSegmentation
+        // Добавляем также компонент DemoWallSegmentation для отладки
         DemoWallSegmentation demoWallSegmentation = segmentationManagerObj.AddComponent<DemoWallSegmentation>();
         
         // Добавляем компонент OpenCVProcessor для постобработки сегментации
@@ -644,17 +653,6 @@ public class ARWallPaintingSceneCreator : Editor
                 debugImageProp.objectReferenceValue = debugImage;
                 serializedDemoDebug.ApplyModifiedProperties();
             }
-        }
-        
-        // Добавляем компонент для принудительного включения демо-режима
-        ForceDemoMode forceDemoMode = segmentationManagerObj.AddComponent<ForceDemoMode>();
-        
-        SerializedObject serializedForceDemo = new SerializedObject(forceDemoMode);
-        SerializedProperty wallSegmentationProp = serializedForceDemo.FindProperty("wallSegmentation");
-        if (wallSegmentationProp != null)
-        {
-            wallSegmentationProp.objectReferenceValue = wallSegmentation;
-            serializedForceDemo.ApplyModifiedProperties();
         }
     }
     

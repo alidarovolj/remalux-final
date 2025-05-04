@@ -341,24 +341,49 @@ public class ARPlaneController : MonoBehaviour
     /// </summary>
     private IEnumerator DelayedHideDefaultPlanes()
     {
-        // Ждем несколько секунд, чтобы сегментация успела инициализироваться
+        // Ждем инициализации сегментации
         yield return new WaitForSeconds(updateDelay);
         
-        // Проверяем, запущена ли уже сегментация
+        // Находим компонент WallSegmentation
         WallSegmentation wallSegmentation = FindObjectOfType<WallSegmentation>();
-        if (wallSegmentation != null && wallSegmentation.GetSegmentationTexture() != null)
+        
+        if (wallSegmentation != null)
         {
-            // Сегментация уже работает, можно скрывать плоскости
-            HideDefaultPlanes();
-            Debug.Log("ARPlaneController: Стандартные AR плоскости скрыты после инициализации сегментации");
+            // Ждем, пока появится текстура сегментации
+            // Используем WaitUntil для ожидания инициализации модели и текстуры сегментации
+            float waitStartTime = Time.time;
+            float maxWaitTime = 10.0f; // Максимальное время ожидания - 10 секунд
+            
+            // Ждем, пока не появится текстура сегментации или не истечет время ожидания
+            while (wallSegmentation.GetSegmentationTexture() == null && (Time.time - waitStartTime) < maxWaitTime)
+            {
+                yield return new WaitForSeconds(0.5f);
+                
+                // Периодически выводим информацию о процессе ожидания
+                if (enableDebugLogs && Time.time - waitStartTime > 2.0f)
+                {
+                    Debug.Log($"ARPlaneController: Ожидание инициализации сегментации... ({(Time.time - waitStartTime):F1} сек)");
+                }
+            }
+            
+            // Если текстура появилась, скрываем стандартные плоскости
+            if (wallSegmentation.GetSegmentationTexture() != null)
+            {
+                Debug.Log("ARPlaneController: Текстура сегментации инициализирована, скрываем стандартные AR плоскости");
+            }
+            else
+            {
+                Debug.LogWarning("ARPlaneController: Текстура сегментации не появилась после ожидания, всё равно скрываем стандартные AR плоскости");
+            }
         }
         else
         {
-            // Сегментация еще не запущена, ждем еще немного
+            Debug.LogWarning("ARPlaneController: Компонент WallSegmentation не найден, скрываем стандартные AR плоскости без проверки сегментации");
             yield return new WaitForSeconds(2.0f);
-            HideDefaultPlanes();
-            Debug.Log("ARPlaneController: Стандартные AR плоскости скрыты после ожидания");
         }
+        
+        // В любом случае скрываем стандартные плоскости после ожидания
+        HideDefaultPlanes();
     }
     
     /// <summary>

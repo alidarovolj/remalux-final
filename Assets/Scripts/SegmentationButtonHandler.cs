@@ -86,6 +86,30 @@ public class SegmentationButtonHandler : MonoBehaviour
         int updatedCount = 0;
         if (wallSegmentation != null)
         {
+            // Переключаем режим на ExternalModel, если он не установлен
+            if (wallSegmentation.GetCurrentMode() != WallSegmentation.SegmentationMode.ExternalModel)
+            {
+                Debug.Log("Переключение режима сегментации на ExternalModel...");
+                wallSegmentation.SwitchMode(WallSegmentation.SegmentationMode.ExternalModel);
+                
+                // Даем время на загрузку модели
+                yield return new WaitForSeconds(0.5f);
+            }
+            
+            // Запускаем обработку кадра камеры
+            var processFramesMethod = wallSegmentation.GetType().GetMethod("ProcessCameraImage", 
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                
+            if (processFramesMethod != null)
+            {
+                Debug.Log("Запуск обработки кадра камеры для сегментации...");
+                processFramesMethod.Invoke(wallSegmentation, null);
+            }
+            
+            // Даем время на обработку
+            yield return new WaitForSeconds(0.5f);
+            
+            // Обновляем статус плоскостей
             updatedCount = wallSegmentation.UpdatePlanesSegmentationStatus();
             Debug.Log($"Обновление сегментации завершено, обработано {updatedCount} плоскостей");
         }
