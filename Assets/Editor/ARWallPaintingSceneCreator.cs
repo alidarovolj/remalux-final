@@ -21,108 +21,230 @@ public class ARWallPaintingSceneCreator : Editor
     {
         // Создаем новую сцену
         EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-        
+
         // 1. Создаем основные префабы, если их еще нет
         CreateARPrefabs();
-        
+
         // 2. Создаем базовую AR структуру
         GameObject arRootObject = CreateARRootStructure();
-        
+
         // 3. Настраиваем AR компоненты
         SetupARComponents(arRootObject);
-        
+
         // 4. Создаем UI для приложения и получаем ссылку на Canvas
         Canvas mainCanvas = CreateARUI(arRootObject);
-        
-        // 5. Добавляем систему сегментации стен
-        CreateWallSegmentation(arRootObject);
-        
-        // 6. Добавляем систему окраски стен
-        CreateWallPainting(arRootObject);
-        
-        // 7. Создаем систему симуляции окружения
-        GameObject simEnvironmentObj = new GameObject("Simulated Environment Scene");
-        SimulatedEnvironmentScene simEnvironment = simEnvironmentObj.AddComponent<SimulatedEnvironmentScene>();
-        
-        // 8. Создаем дополнительные вспомогательные объекты
-        CreateHelperObjects(arRootObject);
-        
-        // 9. Добавляем контроллер AR плоскостей
-        GameObject planeControllerObj = new GameObject("ARPlaneController");
-        ARPlaneController planeController = planeControllerObj.AddComponent<ARPlaneController>();
-        
-        // Настраиваем ссылки для контроллера плоскостей
-        SerializedObject serializedPlaneController = new SerializedObject(planeController);
-        serializedPlaneController.FindProperty("planeManager").objectReferenceValue = arRootObject.GetComponentInChildren<ARPlaneManager>();
-        serializedPlaneController.ApplyModifiedProperties();
-        
-        Debug.Log("Добавлен ARPlaneController для управления визуализацией AR плоскостей");
-        
-        // 10. Добавляем компонент для управления визуализацией стен
-        GameObject wallVisualizationUIObj = new GameObject("WallVisualizationUI");
-        ARWallVisualizationUI wallVisualizationUI = wallVisualizationUIObj.AddComponent<ARWallVisualizationUI>();
-        
-        // Находим необходимые компоненты
+
+        // 5. Добавляем компонент WallSegmentation2D для 2D визуализации стен
+        GameObject wallSegmentation2DObj = new GameObject("WallSegmentation2D");
+        wallSegmentation2DObj.transform.SetParent(arRootObject.transform);
+        WallSegmentation2D wallSegmentation2D = wallSegmentation2DObj.AddComponent<WallSegmentation2D>();
+
+        // Назначаем камеру для WallSegmentation2D
         XROrigin xrOrigin = arRootObject.GetComponentInChildren<XROrigin>();
-        ARPlaneManager planeManager = xrOrigin?.GetComponent<ARPlaneManager>();
-        
-        // Настраиваем ссылки
-        SerializedObject serializedWallUI = new SerializedObject(wallVisualizationUI);
-        serializedWallUI.FindProperty("planeManager").objectReferenceValue = planeManager;
-        serializedWallUI.FindProperty("uiCanvas").objectReferenceValue = mainCanvas;
-        serializedWallUI.ApplyModifiedProperties();
-        
-        Debug.Log("Добавлен компонент ARWallVisualizationUI для управления визуализацией стен");
-        
-        // 11. Настраиваем кнопку обновления сегментации
-        GameObject updateSegmentationButtonObj = GameObject.Find("UpdateSegmentationButton");
-        Button updateSegmentationButton = updateSegmentationButtonObj?.GetComponent<Button>();
-        WallSegmentation wallSegmentation = arRootObject.GetComponentInChildren<WallSegmentation>();
-
-        if (updateSegmentationButton != null && wallSegmentation != null)
+        if (xrOrigin != null && xrOrigin.Camera != null)
         {
-            // Создаем новый GameObject для хранения EventSystem, если его нет
-            if (GameObject.FindObjectOfType<UnityEngine.EventSystems.EventSystem>() == null)
+            ARCameraManager cameraManager = xrOrigin.Camera.GetComponent<ARCameraManager>();
+            if (cameraManager != null)
             {
-                GameObject eventSystemObj = new GameObject("EventSystem");
-                eventSystemObj.AddComponent<UnityEngine.EventSystems.EventSystem>();
-                eventSystemObj.AddComponent<UnityEngine.EventSystems.StandaloneInputModule>();
-                Debug.Log("Создан EventSystem для обработки UI событий");
+                SerializedObject serializedWall2D = new SerializedObject(wallSegmentation2D);
+                SerializedProperty cameraManagerProp = serializedWall2D.FindProperty("cameraManager");
+                if (cameraManagerProp != null)
+                {
+                    cameraManagerProp.objectReferenceValue = cameraManager;
+                    serializedWall2D.ApplyModifiedProperties();
+                    Debug.Log("ARCameraManager успешно назначен для WallSegmentation2D");
+                }
+            }
+        }
+
+        // 6. Добавляем настройщик 2D-окраски стен
+        GameObject setupObject = new GameObject("WallPaintingSetup");
+        setupObject.transform.SetParent(arRootObject.transform);
+        WallPaintingSetup wallPaintingSetup = setupObject.AddComponent<WallPaintingSetup>();
+
+        if (wallPaintingSetup != null)
+        {
+            // Начальная настройка
+            wallPaintingSetup.paintColor = new Color(0.85f, 0.1f, 0.1f, 1.0f); // Красный
+            wallPaintingSetup.paintOpacity = 0.7f;
+            wallPaintingSetup.preserveShadows = 0.8f;
+
+            // Автоматически настраиваем при старте
+            wallPaintingSetup.autoSetupOnStart = true;
+
+            Debug.Log("Добавлен компонент WallPaintingSetup для настройки 2D-визуализации стен");
+        }
+
+        // 7. Добавляем палитру цветов
+        GameObject colorPaletteObj = new GameObject("ColorPalette");
+        colorPaletteObj.transform.SetParent(arRootObject.transform);
+        ColorPalette colorPalette = colorPaletteObj.AddComponent<ColorPalette>();
+
+        // Связываем с настройщиком
+        if (colorPalette != null && wallPaintingSetup != null)
+        {
+            SerializedObject serializedColorPalette = new SerializedObject(colorPalette);
+            serializedColorPalette.FindProperty("wallPaintingSetup").objectReferenceValue = wallPaintingSetup;
+            serializedColorPalette.ApplyModifiedProperties();
+
+            Debug.Log("Добавлен компонент ColorPalette для выбора цветов покраски");
+        }
+
+        // 8. Создаем EventSystem для работы UI, если его еще нет
+        if (GameObject.FindObjectOfType<UnityEngine.EventSystems.EventSystem>() == null)
+        {
+            GameObject eventSystemObj = new GameObject("EventSystem");
+            eventSystemObj.AddComponent<UnityEngine.EventSystems.EventSystem>();
+            eventSystemObj.AddComponent<UnityEngine.EventSystems.StandaloneInputModule>();
+            Debug.Log("Создан EventSystem для обработки UI событий");
+        }
+
+        // 9. Создаем симуляционную камеру для тестирования в редакторе
+        GameObject simulationCameraObj = new GameObject("SimulationCamera");
+        simulationCameraObj.transform.SetParent(arRootObject.transform);
+        Camera simulationCamera = simulationCameraObj.AddComponent<Camera>();
+        simulationCameraObj.AddComponent<EditorCameraController>();
+
+        // Настройка камеры
+        simulationCameraObj.transform.position = new Vector3(0, 1.6f, 0);
+        simulationCamera.clearFlags = CameraClearFlags.SolidColor;
+        simulationCamera.backgroundColor = new Color(0.2f, 0.2f, 0.2f, 1.0f);
+
+        Debug.Log("Добавлена симуляционная камера для тестирования в редакторе");
+
+        // 10. Исправляем WallVisualization для предотвращения проблемы белого экрана
+        GameObject wallVisObj = GameObject.Find("WallVisualization");
+        bool wallVisualizationCreated = false;
+
+        // Если не нашли точно по имени, ищем объект, содержащий "WallVisualization" в имени
+        if (wallVisObj == null)
+        {
+            foreach (GameObject obj in Resources.FindObjectsOfTypeAll<GameObject>())
+            {
+                if (obj.name.Contains("WallVisualization"))
+                {
+                    wallVisObj = obj;
+                    break;
+                }
             }
 
-            // Создаем компонент для обработки нажатия на кнопку
-            GameObject segmentationUpdaterObj = new GameObject("SegmentationButtonHandler");
-            SegmentationButtonHandler handler = segmentationUpdaterObj.AddComponent<SegmentationButtonHandler>();
-            
-            // Настраиваем ссылки
-            SerializedObject serializedButtonHandler = new SerializedObject(handler);
-            serializedButtonHandler.FindProperty("wallSegmentation").objectReferenceValue = wallSegmentation;
-            serializedButtonHandler.FindProperty("updateButton").objectReferenceValue = updateSegmentationButton;
-            
-            // Находим текст кнопки
-            Text buttonText = updateSegmentationButtonObj.GetComponentInChildren<Text>();
-            if (buttonText != null)
+            // Если все еще не нашли, проверяем Canvas на наличие RawImage
+            if (wallVisObj == null && mainCanvas != null)
             {
-                serializedButtonHandler.FindProperty("buttonText").objectReferenceValue = buttonText;
+                foreach (Transform child in mainCanvas.transform)
+                {
+                    if (child.GetComponent<RawImage>() != null)
+                    {
+                        wallVisObj = child.gameObject;
+                        Debug.Log($"Найден объект {wallVisObj.name} с RawImage под Canvas");
+                        break;
+                    }
+                }
             }
-            
-            serializedButtonHandler.ApplyModifiedProperties();
-            
-            // Привязываем обработчик к кнопке 
-            updateSegmentationButton.onClick.AddListener(delegate { handler.UpdateSegmentation(); });
-            
-            Debug.Log("Кнопка обновления сегментации настроена");
         }
-        
-        // 12. Проверяем все настройки компонентов AR
-        ValidateARSetup(arRootObject);
-        
+
+        // Создаем новый WallVisualization, если не нашли существующий
+        if (wallVisObj == null)
+        {
+            Debug.Log("WallVisualization не найден. Создаем новый...");
+
+            // Создаем объект
+            wallVisObj = new GameObject("WallVisualization");
+
+            // Если есть canvas, добавляем как дочерний объект
+            if (mainCanvas != null)
+            {
+                wallVisObj.transform.SetParent(mainCanvas.transform, false);
+            }
+
+            // Добавляем и настраиваем RectTransform
+            RectTransform rectTransform = wallVisObj.AddComponent<RectTransform>();
+            rectTransform.anchorMin = Vector2.zero;
+            rectTransform.anchorMax = Vector2.one;
+            rectTransform.offsetMin = Vector2.zero;
+            rectTransform.offsetMax = Vector2.zero;
+            rectTransform.pivot = new Vector2(0.5f, 0.5f);
+
+            // Добавляем RawImage
+            RawImage rawImage = wallVisObj.AddComponent<RawImage>();
+            rawImage.color = new Color(1f, 1f, 1f, 0f); // Полностью прозрачный
+
+            wallVisualizationCreated = true;
+        }
+
+        // Настраиваем WallVisualization
+        if (wallVisObj != null)
+        {
+            Debug.Log($"Настраиваем WallVisualization объект: {wallVisObj.name}");
+
+            // Получаем компонент RawImage и исправляем его
+            RawImage rawImage = wallVisObj.GetComponent<RawImage>();
+            if (rawImage != null)
+            {
+                // Устанавливаем прозрачность
+                rawImage.color = new Color(1f, 1f, 1f, 0f);
+
+                // Проверяем и настраиваем материал
+                if (rawImage.material == null)
+                {
+                    // Пытаемся найти шейдер WallPaint
+                    Shader wallPaintShader = Shader.Find("Custom/WallPaint");
+                    if (wallPaintShader != null)
+                    {
+                        Material material = new Material(wallPaintShader);
+                        rawImage.material = material;
+                        Debug.Log("Создан новый материал с шейдером WallPaint");
+                    }
+                    else
+                    {
+                        // Если не нашли нужный шейдер, проверяем другие варианты
+                        Shader alternativeShader = Shader.Find("Custom/WallPainting");
+                        if (alternativeShader == null)
+                            alternativeShader = Shader.Find("UI/Default");
+
+                        if (alternativeShader != null)
+                        {
+                            Material material = new Material(alternativeShader);
+                            rawImage.material = material;
+                            Debug.Log($"Создан новый материал с шейдером {alternativeShader.name}");
+                        }
+                    }
+                }
+            }
+            else
+            {
+                Debug.LogError("WallVisualization не содержит компонент RawImage!");
+            }
+
+            // Проверяем и настраиваем WallPaintingTextureUpdater
+            WallPaintingTextureUpdater updater = wallVisObj.GetComponent<WallPaintingTextureUpdater>();
+            if (updater == null)
+            {
+                updater = wallVisObj.AddComponent<WallPaintingTextureUpdater>();
+                Debug.Log("Добавлен WallPaintingTextureUpdater на WallVisualization");
+            }
+
+            // Настраиваем параметры
+            updater.useTemporaryMask = true;
+            updater.paintColor = new Color(0.85f, 0.1f, 0.1f, 1.0f);
+            updater.paintOpacity = 0.7f;
+            updater.preserveShadows = 0.8f;
+
+            // Добавляем WallVisualizationManager
+            WallVisualizationManager manager = wallVisObj.GetComponent<WallVisualizationManager>();
+            if (manager == null)
+            {
+                manager = wallVisObj.AddComponent<WallVisualizationManager>();
+                Debug.Log("Добавлен компонент WallVisualizationManager для предотвращения проблемы белого экрана");
+            }
+        }
+
         // Сохраняем сцену если нужно
         bool saveScene = EditorUtility.DisplayDialog(
             "Сохранить сцену?",
             "Хотите сохранить созданную AR Wall Painting сцену?",
             "Да", "Нет");
-            
+
         if (saveScene)
         {
             string path = EditorUtility.SaveFilePanel(
@@ -130,7 +252,7 @@ public class ARWallPaintingSceneCreator : Editor
                 Application.dataPath,
                 "ARWallPainting",
                 "unity");
-                
+
             if (!string.IsNullOrEmpty(path))
             {
                 // Преобразуем путь к относительному для Unity
@@ -138,15 +260,15 @@ public class ARWallPaintingSceneCreator : Editor
                 {
                     path = "Assets" + path.Substring(Application.dataPath.Length);
                 }
-                
+
                 EditorSceneManager.SaveScene(EditorSceneManager.GetActiveScene(), path);
                 Debug.Log("Сцена успешно сохранена в: " + path);
             }
         }
-        
+
         Debug.Log("AR Wall Painting сцена успешно создана и настроена!");
     }
-    
+
     private static void CreateARPrefabs()
     {
         // Создаем директорию для префабов
@@ -154,7 +276,7 @@ public class ARWallPaintingSceneCreator : Editor
         {
             Directory.CreateDirectory("Assets/Prefabs");
         }
-        
+
         // Создаем префаб AR плоскости
         string planePrefabPath = "Assets/Prefabs/ARPlaneVisualizer.prefab";
         if (!File.Exists(planePrefabPath))
@@ -162,13 +284,13 @@ public class ARWallPaintingSceneCreator : Editor
             // Создаем базовый объект для плоскости
             GameObject planeObject = GameObject.CreatePrimitive(PrimitiveType.Quad);
             planeObject.name = "ARPlaneVisualizer";
-            
+
             // Устанавливаем правильную ориентацию для AR плоскости
             planeObject.transform.localRotation = Quaternion.Euler(90f, 0, 0);
-            
+
             // Добавляем компонент ARPlaneVisualizer
             var visualizer = planeObject.AddComponent<ARPlaneVisualizer>();
-            
+
             // Настраиваем материал
             MeshRenderer renderer = planeObject.GetComponent<MeshRenderer>();
             if (renderer != null)
@@ -177,21 +299,21 @@ public class ARWallPaintingSceneCreator : Editor
                 Material planeMaterial = new Material(Shader.Find("Unlit/Color"));
                 planeMaterial.color = new Color(0.5f, 0.5f, 0.5f, 0.3f);
                 renderer.sharedMaterial = planeMaterial;
-                
+
                 // Настраиваем свойства материала для полупрозрачности
                 renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                 renderer.receiveShadows = false;
             }
-            
+
             // Сохраняем объект как префаб
             GameObject prefab = PrefabUtility.SaveAsPrefabAsset(planeObject, planePrefabPath);
-            
+
             // Удаляем временный объект сцены
             DestroyImmediate(planeObject);
-            
+
             Debug.Log($"AR Plane Prefab создан по пути: {planePrefabPath}");
         }
-        
+
         // Создаем префаб для окрашенной стены
         string wallPrefabPath = "Assets/Prefabs/PaintedWall.prefab";
         if (!File.Exists(wallPrefabPath))
@@ -199,7 +321,7 @@ public class ARWallPaintingSceneCreator : Editor
             // Создаем базовый объект для окрашенной стены
             GameObject wallObject = GameObject.CreatePrimitive(PrimitiveType.Quad);
             wallObject.name = "PaintedWall";
-            
+
             // Настраиваем материал
             MeshRenderer renderer = wallObject.GetComponent<MeshRenderer>();
             if (renderer != null)
@@ -209,79 +331,64 @@ public class ARWallPaintingSceneCreator : Editor
                 wallMaterial.color = Color.white;
                 renderer.sharedMaterial = wallMaterial;
             }
-            
+
             // Сохраняем объект как префаб
             GameObject prefab = PrefabUtility.SaveAsPrefabAsset(wallObject, wallPrefabPath);
-            
+
             // Удаляем временный объект сцены
             DestroyImmediate(wallObject);
-            
+
             Debug.Log($"Painted Wall Prefab создан по пути: {wallPrefabPath}");
         }
-        
+
         // Создаем другие необходимые префабы...
     }
-    
+
     private static GameObject CreateARRootStructure()
     {
         // Создаем корневой объект для AR сцены
         GameObject arRoot = new GameObject("ARWallPainting*");
-        
+
         // Создаем AR Session
         GameObject arSessionObj = new GameObject("AR Session");
         arSessionObj.transform.SetParent(arRoot.transform);
         ARSession arSession = arSessionObj.AddComponent<ARSession>();
         arSessionObj.AddComponent<ARInputManager>();
-        
+
         // Создаем XR Origin
         GameObject xrOriginObj = new GameObject("XR Origin");
         xrOriginObj.transform.SetParent(arRoot.transform);
         XROrigin xrOrigin = xrOriginObj.AddComponent<XROrigin>();
-        
+
         // Добавляем AR-компоненты к XR Origin
         ARCameraManager cameraManager = xrOriginObj.AddComponent<ARCameraManager>();
         ARPlaneManager planeManager = xrOriginObj.AddComponent<ARPlaneManager>();
         ARRaycastManager raycastManager = xrOriginObj.AddComponent<ARRaycastManager>();
-        
+
         // Создаем AR камеру
         GameObject cameraObj = new GameObject("AR Camera");
         cameraObj.transform.SetParent(xrOriginObj.transform);
         Camera camera = cameraObj.AddComponent<Camera>();
         camera.tag = "MainCamera";
-        
+
         // Добавляем компоненты к камере
         cameraObj.AddComponent<ARCameraBackground>();
-        
+
         // Добавляем TrackedPoseDriver для обновления позиции камеры через XR устройство
         AddAppropriateTrackedPoseDriver(cameraObj);
-        
+
         // Назначаем камеру для XR Origin
         xrOrigin.Camera = camera;
-        
-        // Создаем Camera Floor Offset и назначаем его для XR Origin
-        GameObject offsetObj = new GameObject("Camera Floor Offset");
-        offsetObj.transform.SetParent(xrOriginObj.transform);
-        xrOrigin.CameraFloorOffsetObject = offsetObj;
-        
-        // Правильно настраиваем иерархию - перемещаем AR Camera под Camera Floor Offset
-        cameraObj.transform.SetParent(offsetObj.transform);
-        
-        // Создаем Trackables контейнер
-        GameObject trackablesObj = new GameObject("Trackables");
-        trackablesObj.transform.SetParent(xrOriginObj.transform);
-        
-        // Добавляем управление камерами
-        arRoot.AddComponent<CustomARCameraSetup>();
-        
+
         return arRoot;
     }
-    
+
     private static void SetupARComponents(GameObject arRoot)
     {
         // Получаем компоненты
         XROrigin xrOrigin = arRoot.GetComponentInChildren<XROrigin>();
         if (xrOrigin == null) return;
-        
+
         // Настраиваем ARPlaneManager
         ARPlaneManager planeManager = xrOrigin.GetComponent<ARPlaneManager>();
         if (planeManager != null)
@@ -295,7 +402,7 @@ public class ARWallPaintingSceneCreator : Editor
                 Debug.Log("Префаб плоскости назначен для ARPlaneManager");
             }
         }
-        
+
         // Добавляем ARRaycastManager, если его нет
         ARRaycastManager raycastManager = xrOrigin.GetComponent<ARRaycastManager>();
         if (raycastManager == null)
@@ -303,7 +410,7 @@ public class ARWallPaintingSceneCreator : Editor
             raycastManager = xrOrigin.gameObject.AddComponent<ARRaycastManager>();
             Debug.Log("ARRaycastManager добавлен на XROrigin");
         }
-        
+
         // Добавляем ARMeshManager, если его нет
         ARMeshManager meshManager = xrOrigin.GetComponent<ARMeshManager>();
         if (meshManager == null)
@@ -312,12 +419,12 @@ public class ARWallPaintingSceneCreator : Editor
             GameObject meshManagerObj = new GameObject("AR Mesh Manager");
             meshManagerObj.transform.SetParent(xrOrigin.transform);
             meshManager = meshManagerObj.AddComponent<ARMeshManager>();
-            
+
             // Создаем простой MeshFilter, который будет использоваться как meshPrefab
             GameObject tempMeshObj = GameObject.CreatePrimitive(PrimitiveType.Cube);
             tempMeshObj.name = "TempMeshObject";
             tempMeshObj.AddComponent<ARMeshVisualizer>();
-            
+
             // Получаем MeshFilter из временного объекта для назначения meshPrefab
             MeshFilter meshFilter = tempMeshObj.GetComponent<MeshFilter>();
             if (meshFilter != null)
@@ -330,11 +437,11 @@ public class ARWallPaintingSceneCreator : Editor
             {
                 Debug.LogError("Не удалось получить MeshFilter из временного объекта");
             }
-            
+
             // Удаляем временный объект
             DestroyImmediate(tempMeshObj);
         }
-        
+
         // Настраиваем AR Camera
         Camera arCamera = xrOrigin.Camera;
         if (arCamera != null)
@@ -345,7 +452,7 @@ public class ARWallPaintingSceneCreator : Editor
             {
                 cameraManager = arCamera.gameObject.AddComponent<ARCameraManager>();
             }
-            
+
             ARCameraBackground cameraBackground = arCamera.gameObject.GetComponent<ARCameraBackground>();
             if (cameraBackground == null)
             {
@@ -353,7 +460,7 @@ public class ARWallPaintingSceneCreator : Editor
             }
         }
     }
-    
+
     private static Canvas CreateARUI(GameObject arRoot)
     {
         // Создаем Canvas
@@ -363,160 +470,48 @@ public class ARWallPaintingSceneCreator : Editor
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
         canvasObj.AddComponent<CanvasScaler>();
         canvasObj.AddComponent<GraphicRaycaster>();
-        
-        // Создаем панель управления
-        GameObject controlPanelObj = new GameObject("ControlPanel");
-        controlPanelObj.transform.SetParent(canvasObj.transform);
-        RectTransform controlPanelRect = controlPanelObj.AddComponent<RectTransform>();
-        controlPanelRect.anchorMin = new Vector2(0, 0);
-        controlPanelRect.anchorMax = new Vector2(1, 0.2f);
-        controlPanelRect.offsetMin = Vector2.zero;
-        controlPanelRect.offsetMax = Vector2.zero;
-        
-        // Добавляем кнопки для выбора цвета
-        CreateColorButtons(controlPanelObj);
-        
-        // Создаем панель снимков
-        GameObject snapshotPanelObj = new GameObject("SnapshotPanel");
-        snapshotPanelObj.transform.SetParent(canvasObj.transform);
-        RectTransform snapshotPanelRect = snapshotPanelObj.AddComponent<RectTransform>();
-        snapshotPanelRect.anchorMin = new Vector2(0.7f, 0.2f);
-        snapshotPanelRect.anchorMax = new Vector2(1, 0.8f);
-        snapshotPanelRect.offsetMin = Vector2.zero;
-        snapshotPanelRect.offsetMax = Vector2.zero;
-        
-        // Добавляем кнопку для создания снимков
-        GameObject snapshotButtonObj = new GameObject("СнимкиButton");
-        snapshotButtonObj.transform.SetParent(canvasObj.transform);
-        RectTransform snapshotButtonRect = snapshotButtonObj.AddComponent<RectTransform>();
-        snapshotButtonRect.anchorMin = new Vector2(0.8f, 0.9f);
-        snapshotButtonRect.anchorMax = new Vector2(0.95f, 0.98f);
-        snapshotButtonRect.offsetMin = Vector2.zero;
-        snapshotButtonRect.offsetMax = Vector2.zero;
-        
-        Button snapshotButton = snapshotButtonObj.AddComponent<Button>();
-        
-        // Добавляем текст к кнопке снимков
-        GameObject textObj = new GameObject("Text");
-        textObj.transform.SetParent(snapshotButtonObj.transform);
-        RectTransform textRect = textObj.AddComponent<RectTransform>();
-        textRect.anchorMin = Vector2.zero;
-        textRect.anchorMax = Vector2.one;
-        textRect.offsetMin = Vector2.zero;
-        textRect.offsetMax = Vector2.zero;
-        
-        Text text = textObj.AddComponent<Text>();
-        text.text = "Снимки";
-        text.color = Color.black;
-        text.alignment = TextAnchor.MiddleCenter;
-        text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-        
-        // Создаем кнопку для обновления сегментации
-        GameObject updateSegmentationButtonObj = new GameObject("UpdateSegmentationButton");
-        updateSegmentationButtonObj.transform.SetParent(canvasObj.transform);
-        RectTransform updateSegmentationButtonRect = updateSegmentationButtonObj.AddComponent<RectTransform>();
-        updateSegmentationButtonRect.anchorMin = new Vector2(0.6f, 0.9f);
-        updateSegmentationButtonRect.anchorMax = new Vector2(0.78f, 0.98f);
-        updateSegmentationButtonRect.offsetMin = Vector2.zero;
-        updateSegmentationButtonRect.offsetMax = Vector2.zero;
-        
-        Button updateSegmentationButton = updateSegmentationButtonObj.AddComponent<Button>();
-        Image buttonImage = updateSegmentationButtonObj.AddComponent<Image>();
-        buttonImage.color = new Color(0.3f, 0.6f, 0.9f, 1.0f);
-        updateSegmentationButton.targetGraphic = buttonImage;
-        
-        // Добавляем текст к кнопке
-        GameObject updateButtonTextObj = new GameObject("Text");
-        updateButtonTextObj.transform.SetParent(updateSegmentationButtonObj.transform);
-        RectTransform updateButtonTextRect = updateButtonTextObj.AddComponent<RectTransform>();
-        updateButtonTextRect.anchorMin = Vector2.zero;
-        updateButtonTextRect.anchorMax = Vector2.one;
-        updateButtonTextRect.offsetMin = Vector2.zero;
-        updateButtonTextRect.offsetMax = Vector2.zero;
-        
-        Text updateButtonText = updateButtonTextObj.AddComponent<Text>();
-        updateButtonText.text = "Обновить сегм.";
-        updateButtonText.color = Color.white;
-        updateButtonText.alignment = TextAnchor.MiddleCenter;
-        updateButtonText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-        updateButtonText.fontSize = 14;
-        
-        // Создаем RawImage для отображения сегментации стен
-        GameObject rawImageObj = new GameObject("RawImage");
-        rawImageObj.transform.SetParent(canvasObj.transform);
-        RectTransform rawImageRect = rawImageObj.AddComponent<RectTransform>();
-        rawImageRect.anchorMin = new Vector2(0.05f, 0.7f);
-        rawImageRect.anchorMax = new Vector2(0.35f, 0.95f);
-        rawImageRect.offsetMin = Vector2.zero;
-        rawImageRect.offsetMax = Vector2.zero;
-        
-        RawImage rawImage = rawImageObj.AddComponent<RawImage>();
-        
+
+        // Создаем RawImage для визуализации стен
+        GameObject wallVisualizationObj = new GameObject("WallVisualization");
+        wallVisualizationObj.transform.SetParent(canvasObj.transform);
+        RectTransform visualizationRect = wallVisualizationObj.AddComponent<RectTransform>();
+        visualizationRect.anchorMin = Vector2.zero;
+        visualizationRect.anchorMax = Vector2.one;
+        visualizationRect.offsetMin = Vector2.zero;
+        visualizationRect.offsetMax = Vector2.zero;
+
+        RawImage wallVisualizationImage = wallVisualizationObj.AddComponent<RawImage>();
+        wallVisualizationImage.color = Color.white;
+
+        // Создаем кнопку переключения цветов (только интерфейс, функциональность будет добавлена в ColorPalette)
+        GameObject colorButtonsContainer = new GameObject("ColorButtonsContainer");
+        colorButtonsContainer.transform.SetParent(canvasObj.transform);
+        RectTransform colorButtonsRect = colorButtonsContainer.AddComponent<RectTransform>();
+        colorButtonsRect.anchorMin = new Vector2(0, 0);
+        colorButtonsRect.anchorMax = new Vector2(1, 0.15f);
+        colorButtonsRect.offsetMin = Vector2.zero;
+        colorButtonsRect.offsetMax = Vector2.zero;
+
+        // Добавляем горизонтальную группу для автоматического размещения кнопок
+        HorizontalLayoutGroup layoutGroup = colorButtonsContainer.AddComponent<HorizontalLayoutGroup>();
+        layoutGroup.spacing = 10f;
+        layoutGroup.childAlignment = TextAnchor.MiddleCenter;
+        layoutGroup.childForceExpandWidth = false;
+        layoutGroup.childForceExpandHeight = false;
+        layoutGroup.padding = new RectOffset(10, 10, 10, 10);
+
         return canvas;
     }
-    
-    private static void CreateColorButtons(GameObject parent)
-    {
-        // Цвета для кнопок
-        Color[] colors = new Color[]
-        {
-            Color.red,
-            Color.green,
-            Color.blue,
-            Color.yellow,
-            Color.white
-        };
-        
-        string[] buttonNames = new string[]
-        {
-            "RedButton",
-            "GreenButton",
-            "BlueButton",
-            "YellowButton",
-            "WhiteButton"
-        };
-        
-        // Создаем кнопки для выбора цвета
-        for (int i = 0; i < colors.Length; i++)
-        {
-            GameObject buttonObj = new GameObject(buttonNames[i]);
-            buttonObj.transform.SetParent(parent.transform);
-            
-            RectTransform buttonRect = buttonObj.AddComponent<RectTransform>();
-            float width = 1.0f / colors.Length;
-            buttonRect.anchorMin = new Vector2(i * width, 0.2f);
-            buttonRect.anchorMax = new Vector2((i + 1) * width, 0.9f);
-            buttonRect.offsetMin = new Vector2(5, 5);
-            buttonRect.offsetMax = new Vector2(-5, -5);
-            
-            Button button = buttonObj.AddComponent<Button>();
-            
-            // Добавляем Image для отображения цвета
-            GameObject imageObj = new GameObject("Image");
-            imageObj.transform.SetParent(buttonObj.transform);
-            RectTransform imageRect = imageObj.AddComponent<RectTransform>();
-            imageRect.anchorMin = Vector2.zero;
-            imageRect.anchorMax = Vector2.one;
-            imageRect.offsetMin = Vector2.zero;
-            imageRect.offsetMax = Vector2.zero;
-            
-            Image image = imageObj.AddComponent<Image>();
-            image.color = colors[i];
-            
-            // Используем этот Image как target graphic для кнопки
-            button.targetGraphic = image;
-        }
-    }
-    
+
     private static void CreateWallSegmentation(GameObject arRoot)
     {
         // Создаем объект для WallSegmentationManager
         GameObject segmentationManagerObj = new GameObject("WallSegmentationManager");
         segmentationManagerObj.transform.SetParent(arRoot.transform);
-        
+
         // Добавляем компонент WallSegmentation
         WallSegmentation wallSegmentation = segmentationManagerObj.AddComponent<WallSegmentation>();
-        
+
         // Настраиваем параметры для новой модели SegFormer
         SerializedObject serializedWallSegmentation = new SerializedObject(wallSegmentation);
 
@@ -536,19 +531,19 @@ public class ARWallPaintingSceneCreator : Editor
 
         // Устанавливаем индекс класса стены для ADE20K датасета
         serializedWallSegmentation.FindProperty("wallClassIndex").intValue = 1;
-        
+
         // Отключаем принудительный демо-режим
         serializedWallSegmentation.FindProperty("forceDemoMode").boolValue = false;
-        
+
         // Включаем отладочные логи
         serializedWallSegmentation.FindProperty("enableDebugLogs").boolValue = true;
-        
+
         // Применяем настройки
         serializedWallSegmentation.ApplyModifiedProperties();
-        
+
         // Выводим сообщение о настройке
         Debug.Log("WallSegmentation настроен на режим ExternalModel с моделью model.onnx");
-        
+
         // Находим AR камеру и назначаем ее
         XROrigin xrOrigin = arRoot.GetComponentInChildren<XROrigin>();
         if (xrOrigin != null && xrOrigin.Camera != null)
@@ -563,7 +558,7 @@ public class ARWallPaintingSceneCreator : Editor
                     cameraManagerProp.objectReferenceValue = cameraManager;
                     serializedCameraRef.ApplyModifiedProperties();
                 }
-                
+
                 SerializedProperty arCameraProp = serializedCameraRef.FindProperty("arCamera");
                 if (arCameraProp != null)
                 {
@@ -572,7 +567,7 @@ public class ARWallPaintingSceneCreator : Editor
                 }
             }
         }
-        
+
         // Находим RawImage для отображения отладки
         RawImage debugImage = GameObject.Find("RawImage")?.GetComponent<RawImage>();
         if (debugImage != null)
@@ -584,7 +579,7 @@ public class ARWallPaintingSceneCreator : Editor
                 debugImageProp.objectReferenceValue = debugImage;
                 serializedDebugRef.ApplyModifiedProperties();
             }
-            
+
             // Включаем отладочную визуализацию
             SerializedProperty showDebugProp = serializedDebugRef.FindProperty("showDebugVisualisation");
             if (showDebugProp != null)
@@ -598,19 +593,19 @@ public class ARWallPaintingSceneCreator : Editor
         {
             Debug.LogWarning("RawImage не найден для WallSegmentation. Отладочная визуализация не будет работать.");
         }
-        
+
         // В релизных сборках можно отключить демо-компоненты 
         bool isDebugBuild = true; // В релизе заменить на false
 #if DEVELOPMENT_BUILD || UNITY_EDITOR
         isDebugBuild = true;
 #endif
-        
+
         // Добавляем DemoWallSegmentation только в режиме отладки
         if (isDebugBuild)
         {
             // Добавляем также компонент DemoWallSegmentation для отладки
             DemoWallSegmentation demoWallSegmentation = segmentationManagerObj.AddComponent<DemoWallSegmentation>();
-            
+
             // Назначаем AR плоскости и камеру для демо-сегментации
             ARPlaneManager planeManager = arRoot.GetComponentInChildren<ARPlaneManager>();
             if (planeManager != null)
@@ -623,7 +618,7 @@ public class ARWallPaintingSceneCreator : Editor
                     serializedDemoPlaneRef.ApplyModifiedProperties();
                 }
             }
-            
+
             // Назначаем ARCameraManager для демо-сегментации
             if (xrOrigin != null && xrOrigin.Camera != null)
             {
@@ -639,7 +634,7 @@ public class ARWallPaintingSceneCreator : Editor
                     }
                 }
             }
-            
+
             // Назначаем RawImage для отображения демо-сегментации
             if (debugImage != null)
             {
@@ -651,14 +646,14 @@ public class ARWallPaintingSceneCreator : Editor
                     serializedDemoDebug.ApplyModifiedProperties();
                 }
             }
-            
+
             Debug.Log("Добавлен компонент DemoWallSegmentation для отладки");
         }
         else
         {
             Debug.Log("Компонент DemoWallSegmentation пропущен в релизной сборке");
         }
-        
+
         // Добавляем компонент OpenCVProcessor для постобработки сегментации
         OpenCVProcessor openCVProcessor = segmentationManagerObj.AddComponent<OpenCVProcessor>();
         Debug.Log("Добавлен OpenCVProcessor для улучшения результатов сегментации");
@@ -671,23 +666,46 @@ public class ARWallPaintingSceneCreator : Editor
             serializedOpenCV.ApplyModifiedProperties();
         }
     }
-    
+
     private static void CreateWallPainting(GameObject arRoot)
     {
-        // Создаем материал для окраски стен
+        // Создаем материал для окраски стен с использованием WallPainting шейдера
         string materialPath = "Assets/Materials/WallPaintMaterial.mat";
         Material wallPaintMaterial = null;
-        
+
         if (!Directory.Exists("Assets/Materials"))
         {
             Directory.CreateDirectory("Assets/Materials");
         }
-        
+
+        // Проверяем существование шейдера WallPainting
+        Shader wallPaintingShader = Shader.Find("Custom/WallPainting");
+        if (wallPaintingShader == null)
+        {
+            Debug.LogWarning("Шейдер 'Custom/WallPainting' не найден! Будет использован стандартный Unlit/Color шейдер.");
+            wallPaintingShader = Shader.Find("Unlit/Color");
+        }
+        else
+        {
+            Debug.Log("Найден шейдер 'Custom/WallPainting' для визуализации покраски стен в 2D");
+        }
+
         if (!File.Exists(materialPath))
         {
-            // Создаем новый материал
-            Material material = new Material(Shader.Find("Unlit/Color"));
-            material.color = new Color(1, 0, 1, 0.7f); // Розовый полупрозрачный
+            // Создаем новый материал с шейдером WallPainting (если доступен)
+            Material material = new Material(wallPaintingShader);
+            if (wallPaintingShader.name == "Custom/WallPainting")
+            {
+                // Настраиваем специфичные для WallPainting свойства
+                material.SetColor("_PaintColor", new Color(0.85f, 0.1f, 0.1f, 1.0f)); // Красный
+                material.SetFloat("_PaintOpacity", 0.7f);
+                material.SetFloat("_PreserveShadows", 0.8f);
+            }
+            else
+            {
+                material.color = new Color(1, 0, 1, 0.7f); // Розовый полупрозрачный для запасного варианта
+            }
+
             AssetDatabase.CreateAsset(material, materialPath);
             AssetDatabase.SaveAssets();
             wallPaintMaterial = material;
@@ -695,29 +713,223 @@ public class ARWallPaintingSceneCreator : Editor
         else
         {
             wallPaintMaterial = AssetDatabase.LoadAssetAtPath<Material>(materialPath);
+
+            // Обновляем шейдер материала, если он уже существует, но использует другой шейдер
+            if (wallPaintingShader != null && wallPaintMaterial.shader.name != "Custom/WallPainting")
+            {
+                wallPaintMaterial.shader = wallPaintingShader;
+                EditorUtility.SetDirty(wallPaintMaterial);
+                AssetDatabase.SaveAssets();
+            }
         }
-        
+
         // Создаем объект для WallPainterManager
         GameObject painterManagerObj = new GameObject("WallPainterManager");
         painterManagerObj.transform.SetParent(arRoot.transform);
-        
+
         // Добавляем компонент WallPainter
         WallPainter wallPainter = painterManagerObj.AddComponent<WallPainter>();
-        
+
+        // Создаем объект для 2D визуализации стен
+        GameObject wallSegmentation2DObj = new GameObject("WallSegmentation2D");
+        wallSegmentation2DObj.transform.SetParent(arRoot.transform);
+
+        // Добавляем компонент WallSegmentation2D
+        try
+        {
+            var wallSegmentation2D = wallSegmentation2DObj.AddComponent<WallSegmentation2D>();
+            Debug.Log("Добавлен компонент WallSegmentation2D для 2D-визуализации стен");
+
+            // Находим ARCameraManager
+            XROrigin arXROrigin = arRoot.GetComponentInChildren<XROrigin>();
+            ARCameraManager cameraManager = arXROrigin?.Camera.GetComponent<ARCameraManager>();
+
+            // Назначаем камеру для WallSegmentation2D
+            if (cameraManager != null)
+            {
+                SerializedObject serializedWall2D = new SerializedObject(wallSegmentation2D);
+                SerializedProperty cameraManagerProp = serializedWall2D.FindProperty("cameraManager");
+                if (cameraManagerProp != null)
+                {
+                    cameraManagerProp.objectReferenceValue = cameraManager;
+                    serializedWall2D.ApplyModifiedProperties();
+                    Debug.Log("ARCameraManager успешно назначен для WallSegmentation2D");
+                }
+            }
+
+            // Добавляем настройщик 2D-окраски стен
+            GameObject setupObject = new GameObject("WallPaintingSetup");
+            setupObject.transform.SetParent(arRoot.transform);
+            WallPaintingSetup wallPaintingSetup = setupObject.AddComponent<WallPaintingSetup>();
+
+            if (wallPaintingSetup != null)
+            {
+                // Начальная настройка
+                wallPaintingSetup.paintColor = new Color(0.85f, 0.1f, 0.1f, 1.0f); // Красный
+                wallPaintingSetup.paintOpacity = 0.7f;
+                wallPaintingSetup.preserveShadows = 0.8f;
+
+                // Автоматически настраиваем при старте (на всякий случай)
+                wallPaintingSetup.autoSetupOnStart = true;
+
+                Debug.Log("Добавлен компонент WallPaintingSetup для настройки 2D-визуализации стен");
+
+                // Добавляем палитру цветов
+                GameObject colorPaletteObj = new GameObject("ColorPalette");
+                colorPaletteObj.transform.SetParent(arRoot.transform);
+                ColorPalette colorPalette = colorPaletteObj.AddComponent<ColorPalette>();
+
+                // Связываем с настройщиком
+                if (colorPalette != null && wallPaintingSetup != null)
+                {
+                    SerializedObject serializedColorPalette = new SerializedObject(colorPalette);
+                    serializedColorPalette.FindProperty("wallPaintingSetup").objectReferenceValue = wallPaintingSetup;
+                    serializedColorPalette.ApplyModifiedProperties();
+
+                    Debug.Log("Добавлен компонент ColorPalette для выбора цветов покраски");
+                }
+            }
+
+            // Создаем объект для отображения результата
+            GameObject wallPaintingScreenObj = new GameObject("WallPaintingScreen");
+            wallPaintingScreenObj.transform.SetParent(arXROrigin.Camera.transform);
+            wallPaintingScreenObj.transform.localPosition = new Vector3(0, 0, 0.5f);
+            wallPaintingScreenObj.transform.localRotation = Quaternion.identity;
+            wallPaintingScreenObj.transform.localScale = new Vector3(1, 1, 1);
+
+            RawImage wallPaintingImage = wallPaintingScreenObj.AddComponent<RawImage>();
+
+            // Создаем материал для отображения покраски
+            Material screenMaterial = new Material(wallPaintMaterial);
+            wallPaintingImage.material = screenMaterial;
+
+            // Размещаем изображение по размеру экрана
+            RectTransform rectTransform = wallPaintingImage.rectTransform;
+            rectTransform.sizeDelta = new Vector2(1, 1);
+            rectTransform.anchorMin = new Vector2(0, 0);
+            rectTransform.anchorMax = new Vector2(1, 1);
+            rectTransform.pivot = new Vector2(0.5f, 0.5f);
+
+            // Подключаем WallSegmentation2D к материалу
+            if (wallSegmentation2D != null && screenMaterial != null && screenMaterial.shader.name == "Custom/WallPainting")
+            {
+                // Настраиваем материал на использование камеры и маски сегментации
+                screenMaterial.SetTexture("_MainTex", arXROrigin.Camera.targetTexture);
+
+                // Создаем скрипт для обновления текстуры
+                GameObject textureUpdaterObj = new GameObject("TextureUpdater");
+                textureUpdaterObj.transform.SetParent(wallPaintingScreenObj.transform);
+
+                // Добавляем скрипт для обновления текстуры (автоматически создаст MonoBehaviour)
+                MonoBehaviour textureUpdater = textureUpdaterObj.AddComponent<MonoBehaviour>();
+
+                // Настраиваем скрипт через редактор
+                string scriptPath = "Assets/Scripts/WallPaintingTextureUpdater.cs";
+                if (!File.Exists(scriptPath))
+                {
+                    string scriptContent = @"
+using UnityEngine;
+using UnityEngine.UI;
+
+[RequireComponent(typeof(RawImage))]
+public class WallPaintingTextureUpdater : MonoBehaviour 
+{
+    public WallSegmentation2D wallSegmentation2D;
+    private Material material;
+    private RawImage rawImage;
+    
+    void Start() 
+    {
+        rawImage = GetComponent<RawImage>();
+        if (rawImage != null) {
+            material = rawImage.material;
+        }
+    }
+    
+    void Update() 
+    {
+        if (wallSegmentation2D != null && material != null) 
+        {
+            // Обновляем текстуру маски сегментации
+            material.SetTexture(""_MaskTex"", wallSegmentation2D.MaskTexture);
+        }
+    }
+}";
+
+                    // Создаем директорию, если ее нет
+                    string directory = Path.GetDirectoryName(scriptPath);
+                    if (!Directory.Exists(directory))
+                    {
+                        Directory.CreateDirectory(directory);
+                    }
+
+                    // Записываем содержимое скрипта
+                    File.WriteAllText(scriptPath, scriptContent);
+                    AssetDatabase.Refresh();
+
+                    Debug.Log("Создан скрипт WallPaintingTextureUpdater для обновления текстуры");
+                }
+
+                // Ждем немного, чтобы Unity распознала новый скрипт
+                EditorApplication.delayCall += () =>
+                {
+                    // Пытаемся найти WallPaintingTextureUpdater компонент или добавить его
+                    var updaterType = System.Type.GetType("WallPaintingTextureUpdater, Assembly-CSharp");
+                    MonoBehaviour updaterComponent = null;
+
+                    if (updaterType != null)
+                    {
+                        // Удаляем временный MonoBehaviour
+                        DestroyImmediate(textureUpdater);
+
+                        // Добавляем компонент нужного типа
+                        updaterComponent = textureUpdaterObj.AddComponent(updaterType) as MonoBehaviour;
+                        Debug.Log("WallPaintingTextureUpdater компонент успешно добавлен");
+                    }
+                    else
+                    {
+                        // Если тип не найден, используем временный компонент как заглушку
+                        updaterComponent = textureUpdater;
+                        Debug.LogWarning("Скрипт WallPaintingTextureUpdater не был скомпилирован. Перезапустите процесс создания сцены после компиляции скрипта.");
+                    }
+
+                    // Настраиваем связь с WallSegmentation2D
+                    if (updaterComponent != null)
+                    {
+                        // Используем SerializedObject для установки свойств
+                        SerializedObject serializedUpdater = new SerializedObject(updaterComponent);
+                        var segmentationProp = serializedUpdater.FindProperty("wallSegmentation2D");
+                        if (segmentationProp != null)
+                        {
+                            segmentationProp.objectReferenceValue = wallSegmentation2D;
+                            serializedUpdater.ApplyModifiedProperties();
+                            Debug.Log("Связь между WallPaintingTextureUpdater и WallSegmentation2D установлена");
+                        }
+                    }
+                };
+            }
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"Не удалось добавить WallSegmentation2D: {e.Message}");
+            DestroyImmediate(wallSegmentation2DObj);
+        }
+
+        // Продолжаем настройку стандартного WallPainter
         // Находим необходимые компоненты AR и назначаем их
         XROrigin xrOrigin = arRoot.GetComponentInChildren<XROrigin>();
         ARRaycastManager raycastManager = xrOrigin?.GetComponent<ARRaycastManager>();
         WallSegmentation wallSegmentation = arRoot.GetComponentInChildren<WallSegmentation>();
-        
+
         if (raycastManager == null && xrOrigin != null)
         {
             // Если ARRaycastManager не найден, добавляем его
             raycastManager = xrOrigin.gameObject.AddComponent<ARRaycastManager>();
             Debug.Log("Добавлен ARRaycastManager для WallPainter");
         }
-        
+
         SerializedObject serializedObj = new SerializedObject(wallPainter);
-        
+
         // Назначаем ARRaycastManager
         if (raycastManager != null)
         {
@@ -732,7 +944,7 @@ public class ARWallPaintingSceneCreator : Editor
         {
             Debug.LogError("ARRaycastManager не найден и не может быть создан. Покраска стен не будет работать!");
         }
-        
+
         // Назначаем XROrigin
         if (xrOrigin != null)
         {
@@ -742,7 +954,7 @@ public class ARWallPaintingSceneCreator : Editor
                 xrOriginProp.objectReferenceValue = xrOrigin;
             }
         }
-        
+
         // Назначаем AR Camera
         if (xrOrigin != null && xrOrigin.Camera != null)
         {
@@ -752,7 +964,7 @@ public class ARWallPaintingSceneCreator : Editor
                 arCameraProp.objectReferenceValue = xrOrigin.Camera;
             }
         }
-        
+
         // Назначаем WallSegmentation
         if (wallSegmentation != null)
         {
@@ -762,7 +974,7 @@ public class ARWallPaintingSceneCreator : Editor
                 wallSegmentationProp.objectReferenceValue = wallSegmentation;
             }
         }
-        
+
         // Находим или создаем префаб для стены
         GameObject wallPrefab = AssetDatabase.LoadAssetAtPath<GameObject>("Assets/Prefabs/PaintedWall.prefab");
         if (wallPrefab != null)
@@ -773,7 +985,7 @@ public class ARWallPaintingSceneCreator : Editor
                 wallPrefabProp.objectReferenceValue = wallPrefab;
             }
         }
-        
+
         // Назначаем материал для окраски стен
         if (wallPaintMaterial != null)
         {
@@ -783,11 +995,11 @@ public class ARWallPaintingSceneCreator : Editor
                 wallMaterialProp.objectReferenceValue = wallPaintMaterial;
             }
         }
-        
+
         // Применяем изменения
         serializedObj.ApplyModifiedProperties();
     }
-    
+
     private static void CreateHelperObjects(GameObject arRoot)
     {
         // Создаем объект, который не будет уничтожен при загрузке новой сцены
@@ -796,24 +1008,24 @@ public class ARWallPaintingSceneCreator : Editor
         // НЕ делаем его дочерним объектом, так как DontDestroyOnLoad работает только с объектами в корне сцены
         // Скрипт PersistentObject сам переместит объект в корень, если он не там
         dontDestroyObj.AddComponent<PersistentObject>();
-        
+
         // Создаем симуляционную камеру для редактора
         GameObject simulationCameraObj = new GameObject("SimulationCamera");
         simulationCameraObj.transform.SetParent(arRoot.transform);
         Camera simulationCamera = simulationCameraObj.AddComponent<Camera>();
-        
+
         // Добавляем контроллер для управления симуляционной камерой в редакторе
         simulationCameraObj.AddComponent<EditorCameraController>();
-        
+
         // Назначаем начальную позицию и поворот камеры
         simulationCameraObj.transform.position = new Vector3(0, 1.6f, 0);
         simulationCameraObj.transform.rotation = Quaternion.identity;
-        
+
         // Назначаем настройки симуляционной камеры
         simulationCamera.clearFlags = CameraClearFlags.SolidColor;
         simulationCamera.backgroundColor = new Color(0.2f, 0.2f, 0.2f, 1.0f);
         simulationCamera.depth = 0; // Рендерим поверх AR камеры
-        
+
         // Находим объект управления камерами и назначаем симуляционную камеру
         CustomARCameraSetup cameraSetup = arRoot.GetComponent<CustomARCameraSetup>();
         if (cameraSetup != null)
@@ -826,17 +1038,17 @@ public class ARWallPaintingSceneCreator : Editor
                 serializedObj.ApplyModifiedProperties();
             }
         }
-        
+
         // Добавляем компонент для отображения диагностики AR
         ARDebugManager debugManager = arRoot.AddComponent<ARDebugManager>();
-        
+
         // Находим все необходимые компоненты и назначаем их для дебаг-менеджера
         ARSession arSession = arRoot.GetComponentInChildren<ARSession>();
         XROrigin xrOrigin = arRoot.GetComponentInChildren<Unity.XR.CoreUtils.XROrigin>();
         ARPlaneManager planeManager = xrOrigin?.GetComponent<ARPlaneManager>();
-        
+
         SerializedObject serializedDebug = new SerializedObject(debugManager);
-        
+
         // Назначаем ARSession
         if (arSession != null)
         {
@@ -846,7 +1058,7 @@ public class ARWallPaintingSceneCreator : Editor
                 arSessionProp.objectReferenceValue = arSession;
             }
         }
-        
+
         // Назначаем XROrigin
         if (xrOrigin != null)
         {
@@ -856,7 +1068,7 @@ public class ARWallPaintingSceneCreator : Editor
                 xrOriginProp.objectReferenceValue = xrOrigin;
             }
         }
-        
+
         // Назначаем ARPlaneManager
         if (planeManager != null)
         {
@@ -866,9 +1078,9 @@ public class ARWallPaintingSceneCreator : Editor
                 planeManagerProp.objectReferenceValue = planeManager;
             }
         }
-        
+
         serializedDebug.ApplyModifiedProperties();
-        
+
         // Создаем объект для симуляции окружения (например, для AR Simulation)
         GameObject simulatedEnvObj = new GameObject("Simulated Environment Scene");
         simulatedEnvObj.transform.SetParent(arRoot.transform);
@@ -886,39 +1098,39 @@ public class ARWallPaintingSceneCreator : Editor
             Debug.Log("Добавлен TrackedPoseDriver (Input System)");
             return;
         }
-        
+
         // Если новый Input System недоступен, пробуем добавить старый TrackedPoseDriver
         var oldInputSystemType = System.Type.GetType("UnityEngine.SpatialTracking.TrackedPoseDriver, UnityEngine.SpatialTracking");
         if (oldInputSystemType != null)
         {
             // Старый Input System доступен
             var driver = targetObject.AddComponent(oldInputSystemType);
-            
+
             // Настраиваем через reflection, чтобы избежать ошибок компиляции
             try
             {
                 var setPoseSourceMethod = oldInputSystemType.GetMethod("SetPoseSource", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
                 var deviceTypeEnum = System.Type.GetType("UnityEngine.SpatialTracking.TrackedPoseDriver+DeviceType, UnityEngine.SpatialTracking");
                 var trackedPoseEnum = System.Type.GetType("UnityEngine.SpatialTracking.TrackedPoseDriver+TrackedPose, UnityEngine.SpatialTracking");
-                
+
                 if (setPoseSourceMethod != null && deviceTypeEnum != null && trackedPoseEnum != null)
                 {
                     var genericXRDevice = System.Enum.Parse(deviceTypeEnum, "GenericXRDevice");
                     var centerEye = System.Enum.Parse(trackedPoseEnum, "Center");
                     setPoseSourceMethod.Invoke(driver, new object[] { genericXRDevice, centerEye });
-                    
+
                     // Установка trackingType и updateType
                     var trackingTypeProperty = oldInputSystemType.GetProperty("trackingType");
                     var updateTypeProperty = oldInputSystemType.GetProperty("updateType");
                     var trackingTypeEnum = System.Type.GetType("UnityEngine.SpatialTracking.TrackedPoseDriver+TrackingType, UnityEngine.SpatialTracking");
                     var updateTypeEnum = System.Type.GetType("UnityEngine.SpatialTracking.TrackedPoseDriver+UpdateType, UnityEngine.SpatialTracking");
-                    
+
                     if (trackingTypeProperty != null && trackingTypeEnum != null)
                     {
                         var rotationAndPosition = System.Enum.Parse(trackingTypeEnum, "RotationAndPosition");
                         trackingTypeProperty.SetValue(driver, rotationAndPosition);
                     }
-                    
+
                     if (updateTypeProperty != null && updateTypeEnum != null)
                     {
                         var updateAndBeforeRender = System.Enum.Parse(updateTypeEnum, "UpdateAndBeforeRender");
@@ -930,11 +1142,11 @@ public class ARWallPaintingSceneCreator : Editor
             {
                 Debug.LogWarning($"Не удалось настроить TrackedPoseDriver: {e.Message}");
             }
-            
+
             Debug.Log("Добавлен TrackedPoseDriver (Legacy)");
             return;
         }
-        
+
         // Если оба варианта недоступны, выдаем предупреждение
         Debug.LogWarning("Не удалось добавить TrackedPoseDriver. Убедитесь, что установлен пакет Input System или XR Legacy Input Helpers.");
     }
@@ -943,7 +1155,7 @@ public class ARWallPaintingSceneCreator : Editor
     private static void ValidateARSetup(GameObject arRoot)
     {
         Debug.Log("Проверка настройки AR компонентов:");
-        
+
         // Проверяем наличие всех важных компонентов
         XROrigin xrOrigin = arRoot.GetComponentInChildren<XROrigin>();
         ARSession arSession = arRoot.GetComponentInChildren<ARSession>();
@@ -951,20 +1163,20 @@ public class ARWallPaintingSceneCreator : Editor
         ARRaycastManager raycastManager = xrOrigin?.GetComponent<ARRaycastManager>();
         WallSegmentation wallSegmentation = arRoot.GetComponentInChildren<WallSegmentation>();
         WallPainter wallPainter = arRoot.GetComponentInChildren<WallPainter>();
-        
+
         // Проверяем XROrigin и Camera
         if (xrOrigin != null)
         {
             Debug.Log("✓ XROrigin найден");
-            
+
             if (xrOrigin.Camera != null)
             {
                 Debug.Log("✓ AR Camera найдена");
-                
+
                 // Проверяем TrackedPoseDriver
                 var trackedPoseDriver1 = xrOrigin.Camera.GetComponent("UnityEngine.InputSystem.XR.TrackedPoseDriver");
                 var trackedPoseDriver2 = xrOrigin.Camera.GetComponent("UnityEngine.SpatialTracking.TrackedPoseDriver");
-                
+
                 if (trackedPoseDriver1 != null || trackedPoseDriver2 != null)
                 {
                     Debug.Log("✓ TrackedPoseDriver найден на AR Camera");
@@ -978,7 +1190,7 @@ public class ARWallPaintingSceneCreator : Editor
             {
                 Debug.LogError("✗ AR Camera НЕ назначена для XROrigin!");
             }
-            
+
             // Проверяем CameraFloorOffsetObject
             if (xrOrigin.CameraFloorOffsetObject != null)
             {
@@ -993,7 +1205,7 @@ public class ARWallPaintingSceneCreator : Editor
         {
             Debug.LogError("✗ XROrigin не найден в сцене!");
         }
-        
+
         // Проверяем AR Session
         if (arSession != null)
         {
@@ -1003,12 +1215,12 @@ public class ARWallPaintingSceneCreator : Editor
         {
             Debug.LogError("✗ AR Session не найден в сцене!");
         }
-        
+
         // Проверяем ARPlaneManager
         if (planeManager != null)
         {
             Debug.Log("✓ ARPlaneManager найден");
-            
+
             if (planeManager.planePrefab != null)
             {
                 Debug.Log("✓ Префаб плоскости назначен для ARPlaneManager");
@@ -1022,7 +1234,7 @@ public class ARWallPaintingSceneCreator : Editor
         {
             Debug.LogError("✗ ARPlaneManager не найден на XROrigin!");
         }
-        
+
         // Проверяем ARRaycastManager
         if (raycastManager != null)
         {
@@ -1032,17 +1244,17 @@ public class ARWallPaintingSceneCreator : Editor
         {
             Debug.LogError("✗ ARRaycastManager не найден на XROrigin! Покраска стен не будет работать");
         }
-        
+
         // Проверяем Wall Segmentation
         if (wallSegmentation != null)
         {
             Debug.Log("✓ WallSegmentation найден");
-            
+
             SerializedObject serializedObj = new SerializedObject(wallSegmentation);
             SerializedProperty cameraManagerProp = serializedObj.FindProperty("cameraManager");
             SerializedProperty debugImageProp = serializedObj.FindProperty("debugImage");
             SerializedProperty showDebugProp = serializedObj.FindProperty("showDebugVisualisation");
-            
+
             if (cameraManagerProp != null && cameraManagerProp.objectReferenceValue != null)
             {
                 Debug.Log("✓ ARCameraManager назначен для WallSegmentation");
@@ -1051,7 +1263,7 @@ public class ARWallPaintingSceneCreator : Editor
             {
                 Debug.LogError("✗ ARCameraManager НЕ назначен для WallSegmentation! Сегментация не будет работать");
             }
-            
+
             if (debugImageProp != null && debugImageProp.objectReferenceValue != null)
             {
                 Debug.Log("✓ Debug Image (RawImage) назначен для WallSegmentation");
@@ -1060,7 +1272,7 @@ public class ARWallPaintingSceneCreator : Editor
             {
                 Debug.LogWarning("⚠ Debug Image (RawImage) НЕ назначен для WallSegmentation! Отладочная визуализация не будет отображаться");
             }
-            
+
             if (showDebugProp != null && showDebugProp.boolValue)
             {
                 Debug.Log("✓ Отладочная визуализация включена в WallSegmentation");
@@ -1074,18 +1286,18 @@ public class ARWallPaintingSceneCreator : Editor
         {
             Debug.LogError("✗ WallSegmentation не найден в сцене!");
         }
-        
+
         // Проверяем Wall Painter
         if (wallPainter != null)
         {
             Debug.Log("✓ WallPainter найден");
-            
+
             SerializedObject serializedObj = new SerializedObject(wallPainter);
             SerializedProperty raycastManagerProp = serializedObj.FindProperty("raycastManager");
             SerializedProperty wallSegmentationProp = serializedObj.FindProperty("wallSegmentation");
             SerializedProperty wallPrefabProp = serializedObj.FindProperty("wallPrefab");
             SerializedProperty wallMaterialProp = serializedObj.FindProperty("wallMaterial");
-            
+
             if (raycastManagerProp != null && raycastManagerProp.objectReferenceValue != null)
             {
                 Debug.Log("✓ ARRaycastManager назначен для WallPainter");
@@ -1094,7 +1306,7 @@ public class ARWallPaintingSceneCreator : Editor
             {
                 Debug.LogError("✗ ARRaycastManager НЕ назначен для WallPainter! Покраска стен не будет работать");
             }
-            
+
             if (wallSegmentationProp != null && wallSegmentationProp.objectReferenceValue != null)
             {
                 Debug.Log("✓ WallSegmentation назначен для WallPainter");
@@ -1103,7 +1315,7 @@ public class ARWallPaintingSceneCreator : Editor
             {
                 Debug.LogError("✗ WallSegmentation НЕ назначен для WallPainter! Покраска стен не будет работать");
             }
-            
+
             if (wallPrefabProp != null && wallPrefabProp.objectReferenceValue != null)
             {
                 Debug.Log("✓ Префаб стены назначен для WallPainter");
@@ -1112,7 +1324,7 @@ public class ARWallPaintingSceneCreator : Editor
             {
                 Debug.LogError("✗ Префаб стены НЕ назначен для WallPainter! Покраска стен не будет работать");
             }
-            
+
             if (wallMaterialProp != null && wallMaterialProp.objectReferenceValue != null)
             {
                 Debug.Log("✓ Материал стены назначен для WallPainter");
@@ -1127,4 +1339,4 @@ public class ARWallPaintingSceneCreator : Editor
             Debug.LogError("✗ WallPainter не найден в сцене!");
         }
     }
-} 
+}

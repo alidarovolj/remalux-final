@@ -10,12 +10,12 @@ public class CustomARCameraSetup : MonoBehaviour
     /// Камера для симуляции в редакторе
     /// </summary>
     public Camera simulationCamera;
-    
+
     /// <summary>
     /// AR камера
     /// </summary>
     private Camera arCamera;
-    
+
     private void Start()
     {
         // Находим AR камеру
@@ -28,7 +28,7 @@ public class CustomARCameraSetup : MonoBehaviour
         {
             Debug.LogError("Не найден XROrigin! AR камера не может быть настроена");
         }
-        
+
         // Если не указана SimulationCamera, найдем её по имени
         if (simulationCamera == null)
         {
@@ -36,19 +36,21 @@ public class CustomARCameraSetup : MonoBehaviour
             if (simCamObj != null)
             {
                 simulationCamera = simCamObj.GetComponent<Camera>();
-                
+
+#if UNITY_EDITOR
                 // Убедимся, что к симуляционной камере прикреплен контроллер
                 if (simulationCamera != null && !simCamObj.GetComponent<EditorCameraController>())
                 {
                     simCamObj.AddComponent<EditorCameraController>();
                 }
+#endif
             }
         }
-        
+
         // Настраиваем камеры в зависимости от режима
         SetupCameras();
     }
-    
+
     private void SetupCameras()
     {
         // В редакторе используем симуляционную камеру
@@ -57,7 +59,7 @@ public class CustomARCameraSetup : MonoBehaviour
         {
             simulationCamera.enabled = true;
             simulationCamera.depth = 1; // Рендерим поверх AR камеры
-            
+
             if (arCamera != null)
             {
                 // Отключаем AR фон в редакторе, но оставляем камеру включенной для обработки AR
@@ -66,7 +68,7 @@ public class CustomARCameraSetup : MonoBehaviour
                 {
                     arCameraBackground.enabled = false;
                 }
-                
+
                 // Важно: не отключаем AR камеру полностью, иначе AR компоненты не будут работать
                 arCamera.enabled = true;
                 arCamera.depth = -1; // Рендерится под симуляционной камерой
@@ -91,4 +93,4 @@ public class CustomARCameraSetup : MonoBehaviour
         }
 #endif
     }
-} 
+}

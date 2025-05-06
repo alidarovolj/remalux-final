@@ -10,20 +10,20 @@ public static class ARMenuSetup
     [MenuItem("Tools/OpenCV for Unity/Create AR Wall Painting Scene", false, 0)]
     public static void CreateARWallPaintingSceneOpenCV()
     {
-        ARSceneCreator.CreateARWallPaintingScene();
+        ARWallPaintingSceneCreator.CreateARWallPaintingScene();
     }
-    
+
     // Основное меню AR
     [MenuItem("AR/Create AR Wall Painting Scene", false, 0)]
     public static void CreateARWallPaintingSceneDirectAR()
     {
-        ARSceneCreator.CreateARWallPaintingScene();
+        ARWallPaintingSceneCreator.CreateARWallPaintingScene();
     }
-    
+
     // Добавляем пункт в подменю Tools/AR
     [MenuItem("Tools/AR/Create AR Wall Painting Scene", false, 0)]
     public static void CreateARWallPaintingSceneToolsAR()
     {
-        ARSceneCreator.CreateARWallPaintingScene();
+        ARWallPaintingSceneCreator.CreateARWallPaintingScene();
     }
-} 
+}
