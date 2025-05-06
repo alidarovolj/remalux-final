@@ -54,6 +54,9 @@ public class WallSegmentation : MonoBehaviour
     [SerializeField] private bool enableDebugLogs = true; // Добавлен флаг включения отладочных логов
     [SerializeField] private bool debugPositioning = true; // Флаг для отладки позиционирования стен (включен по умолчанию)
     [SerializeField] private bool useARPlaneController = true; // Использовать ARPlaneController для управления плоскостями
+    [SerializeField] private bool useSmoothInterpolation = true; // Сглаживание результатов между кадрами для устранения мерцания
+    [SerializeField, Range(0f, 1f)] private float smoothingFactor = 0.2f; // Коэффициент сглаживания (0 - нет сглаживания, 1 - полное сглаживание)
+    [SerializeField, Range(0, 3)] private int stabilizationBufferSize = 2; // Размер буфера стабилизации (0 - отключено)
 
     [Header("Wall Visualization")]
     [SerializeField] private Material wallMaterial; // Материал для стен
@@ -82,6 +85,11 @@ public class WallSegmentation : MonoBehaviour
     private bool isModelInitialized = false; // Флаг инициализации модели
     private float lastProcessTime = 0f; // Время последней обработки
     private bool useNCHW = true; // Флаг формата тензора
+
+    // Буфер для сглаживания результатов
+    private List<Texture2D> resultBuffer = new List<Texture2D>();
+    private int currentBufferIndex = 0;
+    private bool bufferInitialized = false;
 
     // Инициализация
     private void Start()
@@ -1168,6 +1176,117 @@ public class WallSegmentation : MonoBehaviour
         return showDebugVisualisation;
     }
 
+    // Метод для сглаживания результатов сегментации между кадрами
+    private Texture2D InterpolateSegmentationResults(Texture2D newResult)
+    {
+        if (!useSmoothInterpolation || newResult == null)
+            return newResult;
+
+        try
+        {
+            // Стабилизация через буфер изображений
+            if (stabilizationBufferSize > 0)
+            {
+                // Инициализация буфера при первом вызове
+                if (!bufferInitialized)
+                {
+                    resultBuffer.Clear();
+                    for (int i = 0; i < stabilizationBufferSize; i++)
+                    {
+                        // Создаем копии текущего результата для заполнения буфера
+                        Texture2D bufferCopy = new Texture2D(newResult.width, newResult.height, TextureFormat.RGBA32, false);
+                        bufferCopy.SetPixels(newResult.GetPixels());
+                        bufferCopy.Apply();
+                        resultBuffer.Add(bufferCopy);
+                    }
+                    bufferInitialized = true;
+                }
+
+                // Обновляем текущий элемент буфера
+                if (resultBuffer.Count > currentBufferIndex)
+                {
+                    // Если размеры не совпадают, переинициализируем буфер
+                    if (resultBuffer[currentBufferIndex].width != newResult.width ||
+                        resultBuffer[currentBufferIndex].height != newResult.height)
+                    {
+                        bufferInitialized = false;
+                        return newResult;
+                    }
+
+                    // Обновляем текущий элемент буфера
+                    resultBuffer[currentBufferIndex].SetPixels(newResult.GetPixels());
+                    resultBuffer[currentBufferIndex].Apply();
+                }
+
+                // Обновляем индекс буфера
+                currentBufferIndex = (currentBufferIndex + 1) % stabilizationBufferSize;
+
+                // Создаем результат с усреднением всех изображений в буфере
+                Texture2D averagedResult = new Texture2D(newResult.width, newResult.height, TextureFormat.RGBA32, false);
+                Color[] avgPixels = new Color[newResult.width * newResult.height];
+
+                // Инициализируем средние значения пикселей
+                for (int i = 0; i < avgPixels.Length; i++)
+                {
+                    avgPixels[i] = Color.clear;
+                }
+
+                // Суммируем значения пикселей из всех буферов
+                foreach (Texture2D bufferTexture in resultBuffer)
+                {
+                    Color[] bufferPixels = bufferTexture.GetPixels();
+                    for (int i = 0; i < avgPixels.Length; i++)
+                    {
+                        avgPixels[i] += bufferPixels[i] / resultBuffer.Count;
+                    }
+                }
+
+                // Применяем средние значения пикселей
+                averagedResult.SetPixels(avgPixels);
+                averagedResult.Apply();
+
+                return averagedResult;
+            }
+            // Сглаживание через интерполяцию с предыдущим результатом
+            else if (segmentationTexture != null && smoothingFactor > 0)
+            {
+                // Проверяем совпадение размеров текстур
+                if (segmentationTexture.width != newResult.width ||
+                    segmentationTexture.height != newResult.height)
+                {
+                    return newResult;
+                }
+
+                // Создаем результат с интерполяцией между текущим и предыдущим кадрами
+                Texture2D interpolatedResult = new Texture2D(newResult.width, newResult.height, TextureFormat.RGBA32, false);
+
+                // Получаем пиксели текущего и предыдущего результатов
+                Color[] newPixels = newResult.GetPixels();
+                Color[] oldPixels = segmentationTexture.GetPixels();
+                Color[] resultPixels = new Color[newPixels.Length];
+
+                // Интерполируем пиксели
+                for (int i = 0; i < newPixels.Length; i++)
+                {
+                    // Используем линейную интерполяцию между старым и новым значениями
+                    resultPixels[i] = Color.Lerp(newPixels[i], oldPixels[i], smoothingFactor);
+                }
+
+                // Применяем результат
+                interpolatedResult.SetPixels(resultPixels);
+                interpolatedResult.Apply();
+
+                return interpolatedResult;
+            }
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"Ошибка при сглаживании результатов сегментации: {e.Message}");
+        }
+
+        return newResult;
+    }
+
     // Асинхронная обработка изображения
     private IEnumerator ProcessImageAsync(Texture2D sourceTexture)
     {
@@ -1196,7 +1315,9 @@ public class WallSegmentation : MonoBehaviour
         // Применяем результаты вне блока try-catch
         if (resultTexture != null)
         {
-            segmentationTexture = resultTexture;
+            // Применяем сглаживание результатов между кадрами
+            Texture2D smoothedResult = InterpolateSegmentationResults(resultTexture);
+            segmentationTexture = smoothedResult;
 
             // Копируем результат в RenderTexture для использования в шейдере
             if (_outputRenderTexture != null)
