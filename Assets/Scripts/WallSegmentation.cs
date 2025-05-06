@@ -80,6 +80,8 @@ public class WallSegmentation : MonoBehaviour
     private List<GameObject> currentWalls = new List<GameObject>(); // Список текущих стен
     private List<GameObject> demoWalls = new List<GameObject>(); // Список демо-стен
     private bool isModelInitialized = false; // Флаг инициализации модели
+    private float lastProcessTime = 0f; // Время последней обработки
+    private bool useNCHW = true; // Флаг формата тензора
 
     // Инициализация
     private void Start()
@@ -378,76 +380,137 @@ public class WallSegmentation : MonoBehaviour
         }
     }
 
-    // Метод для загрузки модели
+    /// <summary>
+    /// Метод для загрузки выбранной модели сегментации
+    /// </summary>
     private void LoadSelectedModel()
     {
-        // Сбрасываем ссылку на текущую модель
-        currentModelAsset = null;
-
-        // Проверяем общее количество пикселей для предотвращения ошибок 
-        int totalPixels = inputWidth * inputHeight;
-
-        // Проверяем размер входных данных и уменьшаем если они слишком большие
-        // Важно: максимальный безопасный размер для Barracuda - 256x256 пикселей
-        if (inputWidth * inputHeight > 65536) // Превышен безопасный лимит (256x256)
+        try
         {
-            int originalWidth = inputWidth;
-            int originalHeight = inputHeight;
-
-            // Принудительно ограничиваем размер до 128x128
-            inputWidth = 128;
-            inputHeight = 128;
-
-            Debug.LogWarning($"Уменьшаем размер входных данных с {originalWidth}x{originalHeight} до {inputWidth}x{inputHeight} " +
-                           "для предотвращения ошибок с лимитами GPU compute.");
-        }
-
-        Debug.Log($"Используем размер входных данных для модели: {inputWidth}x{inputHeight} ({inputWidth * inputHeight} пикселей)");
-
-        // Проверяем, не превышает ли размер все еще безопасный лимит даже после коррекции
-        if (inputWidth * inputHeight > 65536 && !forceDemoMode) // Больше чем 256x256
-        {
-            Debug.LogWarning($"Размер входных данных модели ({inputWidth}x{inputHeight}={inputWidth * inputHeight} пикселей) все еще превышает безопасный лимит. " +
-                           "Рекомендуем использовать размер 128x128. Включаем демо-режим для безопасности.");
-            forceDemoMode = true;
-            useDemoMode = true;
-
-            // Создаем демо-стены для отображения сразу
-            if (demoWalls.Count == 0)
+            // Если уже есть рабочий воркер, освобождаем его
+            if (worker != null)
             {
-                CreateDemoWalls();
+                worker.Dispose();
+                worker = null;
             }
 
-            // Завершаем загрузку - дальше нет смысла загружать модель
-            return;
-        }
-
-        // Принудительно устанавливаем демо-режим, если он выбран
-        if (currentMode == SegmentationMode.Demo || forceDemoMode)
-        {
-            useDemoMode = true;
-            Debug.Log("Используется демо-режим сегментации стен");
-
-            // Создаем демо-стены для отображения сразу
-            if (demoWalls.Count == 0)
+            // Если уже есть модель, очищаем ее
+            if (model != null)
             {
-                CreateDemoWalls();
+                model.Dispose();
+                model = null;
             }
 
-            return;
-        }
+            // В зависимости от режима, загружаем модель
+            switch (currentMode)
+            {
+                case SegmentationMode.EmbeddedModel:
+                    if (modelAsset != null)
+                    {
+                        model = ModelLoader.Load(modelAsset);
+                        currentModelAsset = modelAsset;
+                    }
+                    else
+                    {
+                        Debug.LogError("Не задана модель в режиме EmbeddedModel. Переключение в демо-режим.");
+                        SwitchToDemoMode();
+                        return;
+                    }
+                    break;
 
-        // Если у нас есть существующий воркер, освобождаем его
-        if (worker != null)
+                case SegmentationMode.ExternalModel:
+                    try
+                    {
+                        // Сначала пробуем загрузить из Resources
+                        NNModel loadedModel = Resources.Load<NNModel>(externalModelPath);
+                        if (loadedModel != null)
+                        {
+                            model = ModelLoader.Load(loadedModel);
+                            currentModelAsset = loadedModel;
+                            Debug.Log($"Успешно загружена модель из Resources: {externalModelPath}");
+                        }
+                        else
+                        {
+                            // Если не нашли в Resources, пробуем StreamingAssets
+                            string modelPath = Path.Combine(Application.streamingAssetsPath, externalModelPath);
+                            if (File.Exists(modelPath))
+                            {
+                                byte[] modelData = File.ReadAllBytes(modelPath);
+                                model = ModelLoader.LoadFromBytes(modelData);
+                                Debug.Log($"Успешно загружена модель из StreamingAssets: {modelPath}");
+                            }
+                            else
+                            {
+                                // Ищем среди всех ONNX моделей в Resources
+                                NNModel[] allModels = Resources.LoadAll<NNModel>("");
+                                if (allModels != null && allModels.Length > 0)
+                                {
+                                    model = ModelLoader.Load(allModels[0]);
+                                    currentModelAsset = allModels[0];
+                                    Debug.Log($"Загружена первая доступная модель: {currentModelAsset.name}");
+                                }
+                                else
+                                {
+                                    Debug.LogError($"Не удалось найти модель по пути: {externalModelPath}. Переключение в демо-режим.");
+                                    SwitchToDemoMode();
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        Debug.LogError($"Ошибка при загрузке модели из файла: {e.Message}. Переключение в демо-режим.");
+                        SwitchToDemoMode();
+                        return;
+                    }
+                    break;
+
+                case SegmentationMode.Demo:
+                    // В демо-режиме не загружаем модель
+                    SwitchToDemoMode();
+                    return;
+            }
+
+            // Проверка успешной загрузки модели
+            if (model == null)
+            {
+                Debug.LogError("Не удалось загрузить модель. Переключение в демо-режим.");
+                SwitchToDemoMode();
+                return;
+            }
+
+            // Проверяем наличие нужных входов/выходов в модели
+            if (!model.inputs.Any(i => i.name == inputName))
+            {
+                Debug.LogError($"В модели нет входа с именем {inputName}. Переключение в демо-режим.");
+                SwitchToDemoMode();
+                return;
+            }
+
+            if (!model.outputs.Any(o => o.name == outputName))
+            {
+                Debug.LogError($"В модели нет выхода с именем {outputName}. Переключение в демо-режим.");
+                SwitchToDemoMode();
+                return;
+            }
+
+            // Создаем воркер для выполнения модели
+            WorkerFactory.Type workerType = WorkerFactory.ValidateType(WorkerFactory.Type.CSharpBurst);
+            worker = WorkerFactory.CreateWorker(workerType, model);
+
+            // Устанавливаем флаг инициализации
+            isModelInitialized = true;
+            useDemoMode = false;
+            errorCount = 0;
+
+            Debug.Log($"Модель сегментации успешно загружена и инициализирована. Тип воркера: {workerType}");
+        }
+        catch (Exception e)
         {
-            worker.Dispose();
-            worker = null;
+            Debug.LogError($"Критическая ошибка при загрузке модели: {e.Message}. Переключение в демо-режим.");
+            SwitchToDemoMode();
         }
-
-        // Остальная логика загрузки модели...
-
-        // Устанавливаем флаг инициализации
-        isModelInitialized = true;
     }
 
     // Создание демо-стен
@@ -494,165 +557,236 @@ public class WallSegmentation : MonoBehaviour
         Debug.Log("Включение отладочной визуализации для всех визуализаторов");
     }
 
+    // Обработчик события получения кадра с AR камеры
     private void OnCameraFrameReceived(ARCameraFrameEventArgs args)
     {
-        // Обработка кадра с камеры
+        if (isProcessing || useDemoMode || Time.time - lastProcessTime < processingInterval)
+        {
+            return; // Пропускаем обработку, если уже обрабатывается кадр или не прошел интервал
+        }
+
+        // Пытаемся получить XRCpuImage
+        if (!cameraManager.TryAcquireLatestCpuImage(out XRCpuImage image))
+        {
+            return;
+        }
+
+        // Начинаем обработку
+        isProcessing = true;
+        lastProcessTime = Time.time;
+
+        try
+        {
+            // Настраиваем конвертацию изображения
+            var conversionParams = new XRCpuImage.ConversionParams
+            {
+                inputRect = new RectInt(0, 0, image.width, image.height),
+                outputDimensions = new Vector2Int(inputWidth, inputHeight),
+                outputFormat = TextureFormat.RGBA32,
+                transformation = XRCpuImage.Transformation.MirrorY
+            };
+
+            // Получаем размер буфера для конвертированного изображения
+            int size = image.GetConvertedDataSize(conversionParams);
+            var buffer = new byte[size];
+
+            // Конвертируем изображение в буфер
+            image.Convert(conversionParams, buffer, buffer.Length);
+
+            // Освобождаем ресурсы изображения
+            image.Dispose();
+
+            // Обновляем текстуру с камеры
+            if (cameraTexture == null || cameraTexture.width != inputWidth || cameraTexture.height != inputHeight)
+            {
+                if (cameraTexture != null)
+                    Destroy(cameraTexture);
+
+                cameraTexture = new Texture2D(inputWidth, inputHeight, TextureFormat.RGBA32, false);
+            }
+
+            cameraTexture.LoadRawTextureData(buffer);
+            cameraTexture.Apply();
+
+            // Запускаем процесс сегментации асинхронно
+            StartCoroutine(ProcessImageAsync(cameraTexture));
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"Ошибка при обработке кадра: {e.Message}");
+            isProcessing = false;
+
+            // Учитываем ошибку и при необходимости переключаемся в демо-режим
+            errorCount++;
+            if (errorCount > 5)
+            {
+                Debug.LogWarning("Слишком много ошибок при обработке кадров. Переключаемся в демо-режим.");
+                SwitchToDemoMode();
+            }
+        }
     }
 
     // Метод для запуска сегментации с моделью
     private Texture2D RunModelSegmentation(Texture2D sourceTexture)
     {
-        if (model == null || worker == null || !isModelInitialized)
-        {
-            Debug.LogWarning("Модель или воркер не инициализированы");
-            return DemoSegmentation(sourceTexture);
-        }
-
         try
         {
-            // Получаем данные из текстуры и преобразуем их в формат для тензора
-            float[] tensorData = ConvertTextureToTensor(sourceTexture, inputWidth, inputHeight, inputChannels);
-
-            // Создаем тензор с правильной сигнатурой - используя конструктор с поддержкой float[]
-            // ПРИМЕЧАНИЕ: Unity Barracuda использует NHWC, но ONNX ожидает NCHW
-            // Необходимо правильное преобразование форматов тензоров
-            inputTensor = new Tensor(1, inputHeight, inputWidth, inputChannels, tensorData);
-
-            // Запускаем сеть
-            worker.Execute(inputTensor);
-
-            // Получаем результат
-            Tensor outputTensor = worker.PeekOutput(outputName);
-
-            // Проверка на корректность выходного тензора
-            if (outputTensor == null)
+            // Проверяем инициализацию модели
+            if (!isModelInitialized)
             {
-                Debug.LogError($"Не удалось получить выходной тензор с именем {outputName}");
+                LoadSelectedModel();
+            }
+
+            // Если модель не загружена или worker не создан, возвращаем демо-сегментацию
+            if (model == null || worker == null)
+            {
+                Debug.LogWarning("Модель не инициализирована. Используем демо-сегментацию.");
                 return DemoSegmentation(sourceTexture);
             }
 
-            // Преобразуем результат обратно в текстуру
-            return CreateSegmentationTexture(outputTensor, sourceTexture.width, sourceTexture.height);
-        }
-        catch (System.Exception e)
-        {
-            Debug.LogError($"Ошибка при запуске модели: {e.Message}");
-            return DemoSegmentation(sourceTexture);
-        }
-        finally
-        {
-            // Освобождаем ресурсы
+            // Масштабируем текстуру до размера входа модели
+            TextureScale.Bilinear(sourceTexture, inputWidth, inputHeight);
+
+            // Преобразование текстуры в входной тензор модели
+            float[] inputData = ConvertTextureToTensor(sourceTexture, inputWidth, inputHeight, inputChannels);
+
+            // Создаем входной тензор
             if (inputTensor != null)
             {
                 inputTensor.Dispose();
-                inputTensor = null;
             }
-        }
-    }
 
-    // Вспомогательный метод для конвертации текстуры в тензор
-    private float[] ConvertTextureToTensor(Texture2D texture, int width, int height, int channels)
-    {
-        // Создаем массив для данных тензора
-        float[] tensorData = new float[width * height * channels];
-
-        // Если текстура имеет другие размеры, масштабируем ее
-        Texture2D resizedTexture = texture;
-        if (texture.width != width || texture.height != height)
-        {
-            RenderTexture rt = RenderTexture.GetTemporary(width, height, 0);
-            Graphics.Blit(texture, rt);
-
-            RenderTexture.active = rt;
-            resizedTexture = new Texture2D(width, height, TextureFormat.RGBA32, false);
-            resizedTexture.ReadPixels(new Rect(0, 0, width, height), 0, 0);
-            resizedTexture.Apply();
-
-            RenderTexture.active = null;
-            RenderTexture.ReleaseTemporary(rt);
-        }
-
-        // Копируем данные из текстуры в тензор
-        Color[] pixels = resizedTexture.GetPixels();
-        for (int i = 0; i < pixels.Length; i++)
-        {
-            // RGB каналы
-            if (channels >= 3)
+            // Создаем тензор с правильным форматом данных
+            if (useNCHW)
             {
-                tensorData[i * channels] = pixels[i].r;
-                tensorData[i * channels + 1] = pixels[i].g;
-                tensorData[i * channels + 2] = pixels[i].b;
-
-                // Остальные каналы заполняем значением из R-канала
-                for (int c = 3; c < channels; c++)
-                {
-                    tensorData[i * channels + c] = pixels[i].r;
-                }
+                // Для ONNX моделей: NCHW (batch, channels, height, width)
+                inputTensor = new Tensor(1, inputChannels, inputHeight, inputWidth, inputData);
             }
             else
             {
-                // Для одноканального тензора используем яркость
-                tensorData[i] = pixels[i].grayscale;
+                // Для Unity: NHWC (batch, height, width, channels)
+                inputTensor = new Tensor(1, inputHeight, inputWidth, inputChannels, inputData);
             }
+
+            // Запускаем инференс модели
+            worker.Execute(inputTensor);
+
+            // Получаем результат из выходного тензора
+            Tensor outputTensor = worker.PeekOutput(outputName);
+
+            // Создаем текстуру сегментации на основе результата модели
+            Texture2D segmentationResult = CreateSegmentationTexture(outputTensor, sourceTexture.width, sourceTexture.height);
+
+            // Возвращаем результат сегментации
+            return segmentationResult;
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"Ошибка при выполнении сегментации с моделью: {e.Message}");
+            errorCount++;
+
+            if (errorCount > 3)
+            {
+                Debug.LogWarning("Слишком много ошибок при работе с моделью. Переключаемся в демо-режим.");
+                SwitchToDemoMode();
+            }
+
+            // В случае ошибки возвращаем демо-сегментацию
+            return DemoSegmentation(sourceTexture);
+        }
+    }
+
+    // Преобразует текстуру в одномерный массив нормализованных значений для тензора
+    private float[] ConvertTextureToTensor(Texture2D texture, int width, int height, int channels)
+    {
+        // Проверяем размеры текстуры и при необходимости изменяем
+        if (texture.width != width || texture.height != height)
+        {
+            TextureScale.Bilinear(texture, width, height);
         }
 
-        // Освобождаем ресурсы
-        if (resizedTexture != texture)
+        // Получаем цвета текстуры
+        Color[] pixels = texture.GetPixels();
+
+        // Создаем массив для данных тензора
+        float[] tensorData;
+
+        // В зависимости от формата (NCHW или NHWC) организуем данные по-разному
+        if (useNCHW)
         {
-            Destroy(resizedTexture);
+            // Формат NCHW (batch, channel, height, width) для ONNX моделей
+            tensorData = new float[channels * height * width];
+
+            // Заполняем массив данных для каждого канала
+            for (int c = 0; c < channels; c++)
+            {
+                for (int h = 0; h < height; h++)
+                {
+                    for (int w = 0; w < width; w++)
+                    {
+                        int pixelIndex = h * width + w;
+                        int tensorIndex = c * height * width + h * width + w;
+
+                        // Нормализуем значения в диапазон [0, 1]
+                        switch (c)
+                        {
+                            case 0: // R канал
+                                tensorData[tensorIndex] = pixels[pixelIndex].r;
+                                break;
+                            case 1: // G канал
+                                tensorData[tensorIndex] = pixels[pixelIndex].g;
+                                break;
+                            case 2: // B канал
+                                tensorData[tensorIndex] = pixels[pixelIndex].b;
+                                break;
+                            default: // Если больше 3-х каналов, заполняем нулями
+                                tensorData[tensorIndex] = 0;
+                                break;
+                        }
+                    }
+                }
+            }
+        }
+        else
+        {
+            // Формат NHWC (batch, height, width, channel) для Unity
+            tensorData = new float[height * width * channels];
+
+            // Заполняем массив данных
+            for (int h = 0; h < height; h++)
+            {
+                for (int w = 0; w < width; w++)
+                {
+                    int pixelIndex = h * width + w;
+
+                    // Нормализуем RGB значения в диапазон [0, 1]
+                    tensorData[pixelIndex * channels + 0] = pixels[pixelIndex].r;
+                    tensorData[pixelIndex * channels + 1] = pixels[pixelIndex].g;
+                    tensorData[pixelIndex * channels + 2] = pixels[pixelIndex].b;
+
+                    // Если больше 3-х каналов, заполняем нулями
+                    for (int c = 3; c < channels; c++)
+                    {
+                        tensorData[pixelIndex * channels + c] = 0;
+                    }
+                }
+            }
         }
 
         return tensorData;
     }
 
     /// <summary>
-    /// Создает текстуру сегментации на основе выходного тензора модели
+    /// Создает текстуру сегментации из выходного тензора модели
     /// </summary>
     private Texture2D CreateSegmentationTexture(Tensor outputTensor, int targetWidth, int targetHeight)
     {
-        // Проверяем размеры тензора
-        if (outputTensor == null)
-        {
-            Debug.LogError("Output tensor is null!");
-            return null;
-        }
-
+        // Получаем размеры выходного тензора
         int tensorWidth = outputTensor.width;
         int tensorHeight = outputTensor.height;
+        int tensorChannels = outputTensor.channels;
 
-        // Если указан outputRenderTexture, обновляем его
-        if (_outputRenderTexture != null)
-        {
-            // Создаем текстуру для вывода
-            Texture2D resultTexture = new Texture2D(tensorWidth, tensorHeight, TextureFormat.RGBA32, false);
-
-            // Заполняем текстуру в соответствии с данными тензора
-            for (int y = 0; y < tensorHeight; y++)
-            {
-                for (int x = 0; x < tensorWidth; x++)
-                {
-                    // Получаем значение класса и вероятность для пикселя
-                    float value = outputTensor[0, y, x, 0]; // Первое измерение - индекс батча
-
-                    // Для одноканального выхода просто используем первый канал
-                    Color pixelColor = (value > threshold) ? Color.white : Color.black;
-                    resultTexture.SetPixel(x, y, pixelColor);
-                }
-            }
-
-            // Применяем изменения
-            resultTexture.Apply();
-
-            // Обновляем render texture
-            RenderTexture prevRT = RenderTexture.active;
-            RenderTexture.active = _outputRenderTexture;
-            Graphics.Blit(resultTexture, _outputRenderTexture);
-            RenderTexture.active = prevRT;
-
-            return resultTexture;
-        }
-
-        // Оригинальный код для создания текстуры...
+        // Создаем текстуру для результата сегментации
         Texture2D segmentationTexture = new Texture2D(targetWidth, targetHeight, TextureFormat.RGBA32, false);
 
         // Заполняем текстуру в соответствии с данными тензора
@@ -673,7 +807,7 @@ public class WallSegmentation : MonoBehaviour
                 float value = 0;
 
                 // Проверяем формат выходных данных модели
-                if (outputTensor.channels == 1) // Если это маска (1 канал)
+                if (tensorChannels == 1) // Если это маска (1 канал)
                 {
                     // Просто берем значение маски
                     value = outputTensor[0, tensorY, tensorX, 0];
@@ -681,20 +815,95 @@ public class WallSegmentation : MonoBehaviour
                 else // Если это multi-channel logits (несколько каналов)
                 {
                     // Для модели с multi-class output, берем нужный класс (например, "wall" или "background")
-                    // Предполагаем, что wallClassIndex содержит индекс класса стен
-                    value = outputTensor[0, tensorY, tensorX, wallClassIndex];
+                    int channelIndex = wallClassIndex;
+                    if (channelIndex >= tensorChannels)
+                    {
+                        Debug.LogWarning($"Указанный индекс класса стен ({wallClassIndex}) больше количества каналов в выходном тензоре ({tensorChannels}). Используем индекс 0.");
+                        channelIndex = 0;
+                    }
+
+                    // Получаем значение из тензора
+                    if (useNCHW)
+                    {
+                        // NCHW формат (batch, channel, height, width)
+                        value = outputTensor[0, channelIndex, tensorY, tensorX];
+                    }
+                    else
+                    {
+                        // NHWC формат (batch, height, width, channel)
+                        value = outputTensor[0, tensorY, tensorX, channelIndex];
+                    }
                 }
 
-                // Применяем порог для бинарной сегментации
-                Color pixelColor = (value > threshold) ? Color.white : Color.black;
+                // Применяем порог для бинаризации
+                Color pixelColor = value > threshold ? wallColor : Color.clear;
+
+                // Устанавливаем цвет пикселя
                 segmentationTexture.SetPixel(x, y, pixelColor);
             }
         }
 
-        // Применяем изменения
+        // Применяем изменения к текстуре
         segmentationTexture.Apply();
 
         return segmentationTexture;
+    }
+
+    // Обновление плоскостей на основе результатов сегментации
+    private IEnumerator UpdatePlanesBasedOnSegmentation()
+    {
+        // Получаем ARPlaneManager
+        ARPlaneManager planeManager = FindObjectOfType<ARPlaneManager>();
+        if (planeManager == null)
+        {
+            yield break;
+        }
+
+        // Если нет текстуры сегментации или она неправильно инициализирована
+        if (segmentationTexture == null)
+        {
+            yield break;
+        }
+
+        // Получаем все обнаруженные плоскости
+        foreach (ARPlane plane in planeManager.trackables)
+        {
+            // Проверяем только вертикальные плоскости (возможные стены)
+            if (plane.alignment == PlaneAlignment.Vertical)
+            {
+                // Получаем позицию плоскости в экранных координатах
+                Vector2 screenPos = arCamera.WorldToScreenPoint(plane.center);
+
+                // Проверяем, находится ли плоскость в пределах экрана
+                if (screenPos.x >= 0 && screenPos.x < Screen.width &&
+                    screenPos.y >= 0 && screenPos.y < Screen.height)
+                {
+                    // Нормализуем координаты экрана к размеру текстуры сегментации
+                    int textureX = (int)(screenPos.x * segmentationTexture.width / Screen.width);
+                    int textureY = (int)(screenPos.y * segmentationTexture.height / Screen.height);
+
+                    // Проверяем пиксель на наличие стены (непрозрачный пиксель означает стену)
+                    Color pixelColor = segmentationTexture.GetPixel(
+                        Mathf.Clamp(textureX, 0, segmentationTexture.width - 1),
+                        Mathf.Clamp(textureY, 0, segmentationTexture.height - 1)
+                    );
+
+                    // Если пиксель не прозрачный - это стена
+                    if (pixelColor.a > 0.5f)
+                    {
+                        // Помечаем плоскость как стену для дальнейшего использования
+                        // Можно добавить какой-то визуальный эффект или метку
+                        if (debugPositioning && plane.gameObject.GetComponent<Renderer>() != null)
+                        {
+                            // Изменяем цвет визуализатора плоскости для отладки
+                            plane.gameObject.GetComponent<Renderer>().material.color = wallColor;
+                        }
+                    }
+                }
+            }
+        }
+
+        yield return null;
     }
 
     // Публичные методы, используемые другими скриптами
@@ -803,5 +1012,76 @@ public class WallSegmentation : MonoBehaviour
     public bool IsDebugVisualizationEnabled()
     {
         return showDebugVisualisation;
+    }
+
+    // Асинхронная обработка изображения
+    private IEnumerator ProcessImageAsync(Texture2D sourceTexture)
+    {
+        // Ждем один кадр для лучшей отзывчивости UI
+        yield return null;
+
+        try
+        {
+            // Обработка изображения через модель или демо-режим
+            Texture2D resultTexture;
+            if (useDemoMode || forceDemoMode)
+            {
+                resultTexture = DemoSegmentation(sourceTexture);
+            }
+            else
+            {
+                resultTexture = RunModelSegmentation(sourceTexture);
+            }
+
+            // Загружаем результат сегментации
+            if (resultTexture != null)
+            {
+                segmentationTexture = resultTexture;
+
+                // Копируем результат в RenderTexture для использования в шейдере
+                if (_outputRenderTexture != null)
+                {
+                    // Убедимся, что RenderTexture имеет правильный размер
+                    if (_outputRenderTexture.width != resultTexture.width ||
+                        _outputRenderTexture.height != resultTexture.height)
+                    {
+                        // Пересоздаем RenderTexture с правильным размером
+                        if (_outputRenderTexture != null)
+                            _outputRenderTexture.Release();
+
+                        _outputRenderTexture = new RenderTexture(
+                            resultTexture.width,
+                            resultTexture.height,
+                            0,
+                            RenderTextureFormat.R8);
+                        _outputRenderTexture.Create();
+                    }
+
+                    // Копируем данные в RenderTexture
+                    Graphics.Blit(resultTexture, _outputRenderTexture);
+                }
+
+                // Показываем отладочное изображение, если нужно
+                if (showDebugVisualisation && debugImage != null)
+                {
+                    debugImage.texture = resultTexture;
+                }
+
+                // Обновляем статус плоскостей на основе сегментации
+                if (useARPlaneController)
+                {
+                    yield return StartCoroutine(UpdatePlanesBasedOnSegmentation());
+                }
+            }
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"Ошибка при асинхронной обработке изображения: {e.Message}");
+        }
+        finally
+        {
+            // Завершаем обработку
+            isProcessing = false;
+        }
     }
 }

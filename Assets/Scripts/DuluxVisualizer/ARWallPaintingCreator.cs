@@ -178,7 +178,12 @@ public class ARWallPaintingCreator : MonoBehaviour
             // Add canvas components
             mainCanvas = canvasObject.AddComponent<Canvas>();
             mainCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            canvasObject.AddComponent<CanvasScaler>();
+
+            // Add Canvas Scaler for responsive UI
+            CanvasScaler scaler = canvasObject.AddComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1080, 1920);
+
             canvasObject.AddComponent<GraphicRaycaster>();
 
             // Create opacity slider
@@ -200,6 +205,9 @@ public class ARWallPaintingCreator : MonoBehaviour
             AddColorButton(colorPickerPanel, "Red", Color.red);
             AddColorButton(colorPickerPanel, "Green", Color.green);
             AddColorButton(colorPickerPanel, "Blue", Color.blue);
+            AddColorButton(colorPickerPanel, "Yellow", Color.yellow);
+            AddColorButton(colorPickerPanel, "Cyan", Color.cyan);
+            AddColorButton(colorPickerPanel, "White", Color.white);
 
             // Position UI elements
             RectTransform sliderRect = sliderObject.GetComponent<RectTransform>();
@@ -207,6 +215,57 @@ public class ARWallPaintingCreator : MonoBehaviour
             sliderRect.anchorMax = new Vector2(0.4f, 0.95f);
             sliderRect.anchoredPosition = Vector2.zero;
             sliderRect.sizeDelta = Vector2.zero;
+
+            // Add slider fill and handle
+            GameObject sliderFill = new GameObject("Fill");
+            sliderFill.transform.SetParent(sliderObject.transform, false);
+            Image fillImage = sliderFill.AddComponent<Image>();
+            fillImage.color = new Color(0.2f, 0.6f, 1.0f, 1.0f);
+
+            GameObject sliderHandle = new GameObject("Handle");
+            sliderHandle.transform.SetParent(sliderObject.transform, false);
+            Image handleImage = sliderHandle.AddComponent<Image>();
+            handleImage.color = Color.white;
+
+            RectTransform fillRect = sliderFill.GetComponent<RectTransform>();
+            fillRect.anchorMin = new Vector2(0, 0.5f);
+            fillRect.anchorMax = new Vector2(1, 0.5f);
+            fillRect.sizeDelta = new Vector2(0, 10);
+
+            RectTransform handleRect = sliderHandle.GetComponent<RectTransform>();
+            handleRect.anchorMin = new Vector2(0, 0.5f);
+            handleRect.anchorMax = new Vector2(0, 0.5f);
+            handleRect.sizeDelta = new Vector2(20, 20);
+
+            opacitySlider.fillRect = fillRect;
+            opacitySlider.handleRect = handleRect;
+
+            // Background for slider
+            GameObject sliderBg = new GameObject("Background");
+            sliderBg.transform.SetParent(sliderObject.transform, false);
+            Image bgImage = sliderBg.AddComponent<Image>();
+            bgImage.color = new Color(0.25f, 0.25f, 0.25f, 1.0f);
+
+            RectTransform bgRect = sliderBg.GetComponent<RectTransform>();
+            bgRect.anchorMin = new Vector2(0, 0.5f);
+            bgRect.anchorMax = new Vector2(1, 0.5f);
+            bgRect.sizeDelta = new Vector2(0, 10);
+
+            // Add label for slider
+            GameObject sliderLabel = new GameObject("Label");
+            sliderLabel.transform.SetParent(sliderObject.transform, false);
+            Text labelText = sliderLabel.AddComponent<Text>();
+            labelText.text = "Opacity";
+            labelText.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+            labelText.fontSize = 14;
+            labelText.alignment = TextAnchor.MiddleCenter;
+            labelText.color = Color.white;
+
+            RectTransform labelRect = sliderLabel.GetComponent<RectTransform>();
+            labelRect.anchorMin = new Vector2(0, 1);
+            labelRect.anchorMax = new Vector2(1, 1);
+            labelRect.anchoredPosition = new Vector2(0, 10);
+            labelRect.sizeDelta = new Vector2(0, 20);
 
             RectTransform panelRect = colorPickerPanel.GetComponent<RectTransform>();
             panelRect.anchorMin = new Vector2(0.1f, 0.1f);
