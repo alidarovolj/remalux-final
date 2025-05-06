@@ -16,6 +16,11 @@ public class WallPaintBlit : MonoBehaviour
       [SerializeField] private Color _paintColor = Color.red;
       [SerializeField, Range(0, 1)] private float _paintOpacity = 0.7f;
 
+      // Additional visual options
+      [SerializeField, Range(0, 1)] private float _preserveShadows = 0.8f;
+      [SerializeField, Range(0, 1)] private float _smoothEdges = 0.0f;
+      [SerializeField] private bool _debugView = false;
+
       // Property accessors
       public Texture maskTexture
       {
@@ -33,6 +38,24 @@ public class WallPaintBlit : MonoBehaviour
       {
             get { return _paintOpacity; }
             set { _paintOpacity = value; }
+      }
+
+      public float preserveShadows
+      {
+            get { return _preserveShadows; }
+            set { _preserveShadows = value; }
+      }
+
+      public float smoothEdges
+      {
+            get { return _smoothEdges; }
+            set { _smoothEdges = value; }
+      }
+
+      public bool debugView
+      {
+            get { return _debugView; }
+            set { _debugView = value; }
       }
 
       private void Start()
@@ -54,7 +77,7 @@ public class WallPaintBlit : MonoBehaviour
       private void OnRenderImage(RenderTexture source, RenderTexture destination)
       {
             // Make sure shader and mask texture are available
-            if (wallPaintShader == null || _maskTexture == null)
+            if (wallPaintMaterial == null || _maskTexture == null)
             {
                   Graphics.Blit(source, destination);
                   return;
@@ -65,6 +88,9 @@ public class WallPaintBlit : MonoBehaviour
             wallPaintMaterial.SetTexture("_MaskTex", _maskTexture);
             wallPaintMaterial.SetColor("_PaintColor", _paintColor);
             wallPaintMaterial.SetFloat("_PaintOpacity", _paintOpacity);
+            wallPaintMaterial.SetFloat("_PreserveShadows", _preserveShadows);
+            wallPaintMaterial.SetFloat("_SmoothEdges", _smoothEdges);
+            wallPaintMaterial.SetFloat("_DebugView", _debugView ? 1.0f : 0.0f);
 
             // Apply effect
             Graphics.Blit(source, destination, wallPaintMaterial);

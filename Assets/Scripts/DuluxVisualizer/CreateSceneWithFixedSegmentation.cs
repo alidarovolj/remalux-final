@@ -70,6 +70,36 @@ public class CreateSceneWithFixedSegmentation : Editor
                         segmentation.SwitchMode(WallSegmentation.SegmentationMode.Demo);
                         Debug.Log($"Компонент WallSegmentation на объекте {segmentation.gameObject.name} настроен в демо-режиме.");
 
+                        // Настройка на использование model.onnx
+                        if (System.IO.File.Exists("Assets/Models/model.onnx"))
+                        {
+                              Debug.Log("Обнаружена модель model.onnx, настраиваем параметры для неё");
+
+                              // Устанавливаем параметры модели model.onnx
+                              segmentation.SwitchMode(WallSegmentation.SegmentationMode.ExternalModel);
+
+                              // Доступ к приватным полям через рефлексию для установки правильных параметров
+                              var inputWidthField = typeof(WallSegmentation).GetField("inputWidth", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                              var inputHeightField = typeof(WallSegmentation).GetField("inputHeight", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                              var inputChannelsField = typeof(WallSegmentation).GetField("inputChannels", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                              var inputNameField = typeof(WallSegmentation).GetField("inputName", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                              var outputNameField = typeof(WallSegmentation).GetField("outputName", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                              var wallClassIndexField = typeof(WallSegmentation).GetField("wallClassIndex", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                              var externalModelPathField = typeof(WallSegmentation).GetField("externalModelPath", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                              var thresholdField = typeof(WallSegmentation).GetField("threshold", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+                              if (inputWidthField != null) inputWidthField.SetValue(segmentation, 128);
+                              if (inputHeightField != null) inputHeightField.SetValue(segmentation, 128);
+                              if (inputChannelsField != null) inputChannelsField.SetValue(segmentation, 3);
+                              if (inputNameField != null) inputNameField.SetValue(segmentation, "pixel_values");
+                              if (outputNameField != null) outputNameField.SetValue(segmentation, "logits");
+                              if (wallClassIndexField != null) wallClassIndexField.SetValue(segmentation, 0);
+                              if (externalModelPathField != null) externalModelPathField.SetValue(segmentation, "Models/model.onnx");
+                              if (thresholdField != null) thresholdField.SetValue(segmentation, 0.3f);
+
+                              Debug.Log("Параметры WallSegmentation настроены для модели model.onnx");
+                        }
+
                         // Получаем ссылку на ARCameraManager из сцены
                         if (arCameraManager == null)
                         {

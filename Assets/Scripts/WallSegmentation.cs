@@ -38,13 +38,13 @@ public class WallSegmentation : MonoBehaviour
     [SerializeField] public NNModel modelAsset; // Модель ONNX через asset
 
     [Header("Segmentation Parameters")]
-    [SerializeField] private int inputWidth = 32; // Для BiseNet.onnx должно быть 960
-    [SerializeField] private int inputHeight = 32; // Для BiseNet.onnx должно быть 720
-    [SerializeField] private int inputChannels = 3; // Исправлено с 32 на 3, т.к. модели ожидают RGB (3 канала)
-    [SerializeField] private string inputName = "pixel_values"; // Для использования BiseNet.onnx изменить на "image"
-    [SerializeField] private string outputName = "logits"; // Для использования BiseNet.onnx изменить на "predict"
-    [SerializeField, Range(0, 1)] private float threshold = 0.5f;
-    [SerializeField] private int wallClassIndex = 9; // Для model.onnx лучше использовать 0 или 3
+    [SerializeField] private int inputWidth = 128; // Оптимальный размер для model.onnx вместо 32
+    [SerializeField] private int inputHeight = 128; // Оптимальный размер для model.onnx вместо 32
+    [SerializeField] private int inputChannels = 3; // Правильное значение для RGB входного изображения
+    [SerializeField] private string inputName = "pixel_values"; // Правильное имя входа для model.onnx
+    [SerializeField] private string outputName = "logits"; // Правильное имя выхода для model.onnx
+    [SerializeField, Range(0, 1)] private float threshold = 0.3f; // Меньший порог для model.onnx, так как выходные значения отрицательные
+    [SerializeField] private int wallClassIndex = 0; // Класс 0 имеет наивысшую активацию для стен в model.onnx
 
     [Header("Debug & Performance")]
     [SerializeField] private bool forceDemoMode = false; // Отключаем принудительный демо-режим
@@ -441,55 +441,81 @@ public class WallSegmentation : MonoBehaviour
                 case SegmentationMode.ExternalModel:
                     try
                     {
-                        // Сначала пробуем загрузить из Resources
-                        NNModel loadedModel = Resources.Load<NNModel>(externalModelPath);
-                        if (loadedModel != null)
+                        // Путь к модели model.onnx в Assets/Models
+                        string preferredModelPath = "Assets/Models/model.onnx";
+                        bool modelLoaded = false;
+
+                        // Сначала попробуем загрузить из Assets/Models напрямую
+                        if (System.IO.File.Exists(preferredModelPath))
                         {
-                            model = ModelLoader.Load(loadedModel);
-                            currentModelAsset = loadedModel;
-                            Debug.Log($"Успешно загружена модель из Resources: {externalModelPath}");
-                        }
-                        else
-                        {
-                            // Если не нашли в Resources, пробуем StreamingAssets
-                            string modelPath = Path.Combine(Application.streamingAssetsPath, externalModelPath);
-                            if (File.Exists(modelPath))
+                            try
                             {
-                                byte[] modelData = File.ReadAllBytes(modelPath);
-                                // Используем другой метод загрузки вместо LoadFromBytes
+                                byte[] modelData = System.IO.File.ReadAllBytes(preferredModelPath);
                                 model = ModelLoader.Load(modelData);
-                                Debug.Log($"Успешно загружена модель из StreamingAssets: {modelPath}");
+                                Debug.Log($"Успешно загружена модель из Assets/Models: {preferredModelPath}");
+                                modelLoaded = true;
+                            }
+                            catch (Exception e)
+                            {
+                                Debug.LogWarning($"Не удалось загрузить модель напрямую: {e.Message}, пробуем другие пути");
+                            }
+                        }
+
+                        // Если не удалось загрузить напрямую, ищем в Resources
+                        if (!modelLoaded)
+                        {
+                            NNModel loadedModel = Resources.Load<NNModel>(externalModelPath);
+                            if (loadedModel != null)
+                            {
+                                model = ModelLoader.Load(loadedModel);
+                                currentModelAsset = loadedModel;
+                                Debug.Log($"Успешно загружена модель из Resources: {externalModelPath}");
+                                modelLoaded = true;
                             }
                             else
                             {
-                                // Ищем среди всех ONNX моделей в Resources
-                                NNModel[] allModels = Resources.LoadAll<NNModel>("");
-                                if (allModels != null && allModels.Length > 0)
+                                // Если не нашли в Resources, пробуем StreamingAssets
+                                string modelPath = System.IO.Path.Combine(Application.streamingAssetsPath, externalModelPath);
+                                if (System.IO.File.Exists(modelPath))
                                 {
-                                    model = ModelLoader.Load(allModels[0]);
-                                    currentModelAsset = allModels[0];
-
-                                    // Находим название модели для отладки
-                                    string modelName = "Unknown";
-                                    if (currentModelAsset != null)
-                                    {
-                                        // Safely get model name from asset
-                                        modelName = currentModelAsset.name;
-                                    }
-                                    else if (!string.IsNullOrEmpty(externalModelPath))
-                                    {
-                                        modelName = System.IO.Path.GetFileName(externalModelPath);
-                                    }
-
-                                    Debug.Log($"Загружена первая доступная модель: {modelName}");
-                                }
-                                else
-                                {
-                                    Debug.LogError($"Не удалось найти модель по пути: {externalModelPath}. Переключение в демо-режим.");
-                                    SwitchToDemoMode();
-                                    return;
+                                    byte[] modelData = System.IO.File.ReadAllBytes(modelPath);
+                                    // Используем другой метод загрузки вместо LoadFromBytes
+                                    model = ModelLoader.Load(modelData);
+                                    Debug.Log($"Успешно загружена модель из StreamingAssets: {modelPath}");
+                                    modelLoaded = true;
                                 }
                             }
+                        }
+
+                        // Если не удалось найти модель по заданным путям, ищем любые доступные
+                        if (!modelLoaded)
+                        {
+                            // Ищем среди всех ONNX моделей в Resources
+                            NNModel[] allModels = Resources.LoadAll<NNModel>("");
+                            if (allModels != null && allModels.Length > 0)
+                            {
+                                model = ModelLoader.Load(allModels[0]);
+                                currentModelAsset = allModels[0];
+
+                                // Находим название модели для отладки
+                                string modelName = "Unknown";
+                                if (currentModelAsset != null)
+                                {
+                                    // Безопасно получаем имя модели
+                                    modelName = currentModelAsset.name;
+                                }
+
+                                Debug.Log($"Загружена первая доступная модель: {modelName}");
+                                modelLoaded = true;
+                            }
+                        }
+
+                        // Если не удалось загрузить модель, переходим в демо-режим
+                        if (!modelLoaded)
+                        {
+                            Debug.LogError($"Не удалось найти модель по указанным путям. Переключение в демо-режим.");
+                            SwitchToDemoMode();
+                            return;
                         }
                     }
                     catch (Exception e)
@@ -770,6 +796,12 @@ public class WallSegmentation : MonoBehaviour
                     }
                     return DemoSegmentation(sourceTexture);
                 }
+
+                // Анализируем выходной тензор для отладки
+                if (outputTensor != null && enableDebugLogs)
+                {
+                    AnalyzeOutputTensor(outputTensor);
+                }
             }
             catch (Exception e)
             {
@@ -939,7 +971,26 @@ public class WallSegmentation : MonoBehaviour
                 }
 
                 // Применяем порог для бинаризации
-                Color pixelColor = value > threshold ? wallColor : Color.clear;
+                // Для модели model.onnx выходные значения отрицательные,
+                // поэтому используем сравнение с негативным порогом или ищем максимальный класс
+                Color pixelColor;
+
+                if (wallClassIndex == 0 || wallClassIndex == 3) // Классы стен в model.onnx
+                {
+                    // Для model.onnx - значения отрицательные, поэтому инвертируем сравнение
+                    pixelColor = value > -1.9f ? wallColor : Color.clear;
+
+                    // Вывод отладочной информации при включенном логировании
+                    if (enableDebugLogs && x % 20 == 0 && y % 20 == 0)
+                    {
+                        Debug.Log($"Значение тензора для класса {channelIndex} в точке ({x},{y}): {value}");
+                    }
+                }
+                else
+                {
+                    // Для других моделей используем обычное сравнение с порогом
+                    pixelColor = value > threshold ? wallColor : Color.clear;
+                }
 
                 // Устанавливаем цвет пикселя
                 segmentationTexture.SetPixel(x, y, pixelColor);
@@ -1185,5 +1236,85 @@ public class WallSegmentation : MonoBehaviour
 
         // Завершаем обработку
         isProcessing = false;
+    }
+
+    private void AnalyzeOutputTensor(Tensor outputTensor)
+    {
+        if (outputTensor == null || !enableDebugLogs)
+            return;
+
+        int channels = outputTensor.channels;
+        int width = outputTensor.width;
+        int height = outputTensor.height;
+
+        // Подготовим структуру для хранения статистики
+        float[] minValues = new float[channels];
+        float[] maxValues = new float[channels];
+        float[] sumValues = new float[channels];
+
+        for (int i = 0; i < channels; i++)
+        {
+            minValues[i] = float.MaxValue;
+            maxValues[i] = float.MinValue;
+            sumValues[i] = 0;
+        }
+
+        // Собираем статистику
+        int totalPixels = width * height;
+
+        for (int c = 0; c < channels; c++)
+        {
+            // Анализируем только первые 5 каналов и класс стены
+            if (c > 5 && c != wallClassIndex && channels > 10)
+                continue;
+
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    float value;
+                    if (useNCHW)
+                    {
+                        value = outputTensor[0, c, y, x];
+                    }
+                    else
+                    {
+                        value = outputTensor[0, y, x, c];
+                    }
+
+                    minValues[c] = Mathf.Min(minValues[c], value);
+                    maxValues[c] = Mathf.Max(maxValues[c], value);
+                    sumValues[c] += value;
+                }
+            }
+        }
+
+        // Выводим статистику
+        Debug.Log("=== Статистика выходного тензора ===");
+        Debug.Log($"Размер тензора: batch=1, channels={channels}, height={height}, width={width}");
+
+        for (int c = 0; c < channels; c++)
+        {
+            // Выводим статистику только для первых 5 каналов и класса стены
+            if (c > 5 && c != wallClassIndex && channels > 10)
+                continue;
+
+            float avgValue = sumValues[c] / totalPixels;
+
+            string className = c == wallClassIndex ? " (выбранный класс стены)" : "";
+            Debug.Log($"Канал {c}{className}: min={minValues[c]:.###}, max={maxValues[c]:.###}, avg={avgValue:.###}");
+        }
+
+        if (wallClassIndex < channels)
+        {
+            Debug.Log($"Выбранный класс стены (индекс {wallClassIndex}): " +
+                     $"min={minValues[wallClassIndex]:.###}, " +
+                     $"max={maxValues[wallClassIndex]:.###}, " +
+                     $"avg={sumValues[wallClassIndex] / totalPixels:.###}");
+
+            // Рекомендации по порогу
+            float recommendedThreshold = (minValues[wallClassIndex] + maxValues[wallClassIndex]) / 2;
+            Debug.Log($"Рекомендуемый порог для класса стены: {recommendedThreshold:.###}");
+        }
     }
 }
