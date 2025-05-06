@@ -42,36 +42,16 @@ public class ARWallPrefabCreator : Editor
             Debug.Log("AR стена создана успешно. Используйте ее для тестирования окраски.");
             EditorUtility.DisplayDialog("Готово", "AR стена создана успешно. Используйте ее для тестирования окраски.", "OK");
       }
-}
-
-/// <summary>
-/// Имитация компонента ARPlane для тестирования
-/// </summary>
-public class ARPlaneMockup : MonoBehaviour
-{
-      [SerializeField] private bool isWall = true;
-      [SerializeField] private float wallConfidence = 0.9f;
-
-      // Методы для имитации ARPlane
-      public bool IsWall()
-      {
-            return isWall;
-      }
-
-      public float GetConfidence()
-      {
-            return wallConfidence;
-      }
 
       // Показывает отладочную информацию в инспекторе
-      private void OnDrawGizmos()
+      private static void OnDrawGizmos(GameObject obj)
       {
             Gizmos.color = Color.blue;
-            Gizmos.DrawWireCube(transform.position, transform.localScale);
+            Gizmos.DrawWireCube(obj.transform.position, obj.transform.localScale);
 
             // Добавляем текст "AR Wall" над объектом
             Handles.color = Color.cyan;
-            Handles.Label(transform.position + Vector3.up * transform.localScale.y * 0.6f, "AR Wall (testing)");
+            Handles.Label(obj.transform.position + Vector3.up * obj.transform.localScale.y * 0.6f, "AR Wall (testing)");
       }
 }
 #endif

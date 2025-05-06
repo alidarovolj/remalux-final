@@ -1,65 +1,79 @@
-# AR Настенная Покраска
+# Dulux Visualizer AR Wall Painting Project
 
-Это приложение позволяет пользователям обнаруживать стены в дополненной реальности и изменять их цвет в реальном времени, аналогично Dulux Visualizer.
+This Unity project implements an AR wall painting experience similar to the Dulux Visualizer app, allowing users to visualize walls painted in different colors in real-time using AR Foundation.
 
-## Настройка проекта
+## Features
 
-1. У вас должны быть установлены следующие пакеты:
-   - AR Foundation
-   - ARCore XR Plugin (для Android)
-   - ARKit XR Plugin (для iOS)
-   - Unity Barracuda (для сегментации)
+- Real-time wall detection and segmentation using ML model
+- Dynamic wall painting with adjustable colors and opacity
+- Photo mode for devices without AR support
+- Screenshot capture and sharing
+- Editor tools for quick scene setup and testing
 
-2. Создайте AR-сцену через меню:
-   Tools → AR → Create AR Wall Painting Scene
+## Requirements
 
-3. После создания AR-сцены, добавьте на неё следующие компоненты:
-   - Объект с скриптом `ARWallPaintingApp`
-   - UI Canvas с элементами для пользовательского интерфейса
+- Unity 2021.3 LTS or newer
+- AR Foundation 4.2+
+- ARKit XR Plugin (iOS)
+- ARCore XR Plugin (Android)
+- Barracuda 2.0+ (for neural network inference)
 
-## Структура проекта
+## Getting Started
 
-- **Scripts/** - Скрипты C# для логики приложения
-  - `ARWallPaintingApp.cs` - Главный скрипт приложения
-  - `WallSegmentation.cs` - Сегментация стен с помощью моделей Barracuda
-  - `WallPainter.cs` - Логика покраски стен
-  - `UIManager.cs` - Управление пользовательским интерфейсом
+1. Open the project in Unity
+2. Go to `Tools > AR Wall Painting > 1. Create AR Scene Template` to create a ready-to-use AR scene
+3. (Optional) Create a test AR plane using `Tools > AR Wall Painting > 2. Create AR Plane Prefab`
+4. Build and run on a supported AR device
 
-- **Shaders/** - Шейдеры для покраски стен
-  - `WallPaint.shader` - Основной шейдер для покраски стен
+## Project Structure
 
-- **Materials/** - Материалы на основе шейдеров
+### Core Components
 
-- **Prefabs/** - Префабы компонентов приложения
+- **ARWallPaintingCreator.cs**: Main class for setting up the AR scene
+- **WallSegmentation.cs**: Handles wall detection using neural network model
+- **WallPaintBlit.cs**: Applies the paint effect to detected walls
+- **CaptureAndShare.cs**: Handles screenshot capture and sharing
+- **PhotoVisualizerMode.cs**: Provides non-AR alternative using static photos
 
-## Использование приложения
+### Editor Tools
 
-1. **Сканирование окружения:**
-   - При запуске приложения, направляйте камеру на стены в вашем окружении
-   - Приложение автоматически обнаружит вертикальные плоскости (стены)
+- **CreateARSceneCommand.cs**: Creates a template AR scene
+- **CreateARPlanePrefab.cs**: Creates a test AR plane prefab
+- **ARSceneTools.cs**: Editor menu for scene creation
+- **ARWallPrefabCreator.cs**: Editor tool for creating test AR walls
 
-2. **Сегментация стен:**
-   - Приложение проанализирует изображение с камеры и определит области стен
+### Resources
 
-3. **Покраска стен:**
-   - Выберите цвет из палитры
-   - Нажмите на стену, чтобы применить выбранный цвет
-   - Используйте слайдеры для настройки размера кисти и интенсивности
+- **wall_segmentation_model.onnx**: Neural network model for wall segmentation
 
-4. **Дополнительные функции:**
-   - Кнопка сброса для возврата к исходным цветам
-   - Переключение видимости сетки плоскостей
+## Usage
 
-## Требования к моделям
+### AR Mode
+1. Launch the app on a compatible AR device
+2. Point the camera at walls
+3. Use the color buttons to choose a paint color
+4. Adjust the opacity slider to control paint intensity
+5. Capture screenshots using the camera button
 
-Для корректной работы сегментации необходимо использовать модель машинного обучения в формате ONNX (например, DeepLabV3+), обученную на сегментацию стен. Модель должна быть помещена в папку `Assets/Models/`.
+### Photo Mode
+1. Toggle to Photo mode using the button in the top-right corner
+2. Select an image from your gallery
+3. Choose colors and adjust opacity as in AR mode
 
-## Настройка для мобильных устройств
+## Notes
 
-- **Android:**
-  - В Player Settings убедитесь, что включена поддержка ARCore
-  - Установите минимальную версию API 24 или выше
+- The wall segmentation model works best in well-lit environments
+- For optimal results, ensure the entire wall is visible in the camera view
+- Photo mode provides an alternative for devices without AR capabilities
 
-- **iOS:**
-  - Включите поддержку ARKit
-  - Добавьте необходимые разрешения для камеры в Info.plist 
+## Troubleshooting
+
+- If wall detection is inconsistent, try improving lighting conditions
+- On some devices, you may need to move the camera slowly to allow accurate tracking
+- Check that ARCore (Android) or ARKit (iOS) is supported on your device
+
+## Credits
+
+- Wall segmentation model based on BiseNet architecture
+- AR Foundation integration for Unity's XR system
+- UI design inspired by Dulux Visualizer app 
