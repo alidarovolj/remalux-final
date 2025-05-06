@@ -112,6 +112,14 @@ public class ARWallPaintingCreator : MonoBehaviour
             arCameraManager = cameraObject.AddComponent<ARCameraManager>();
             cameraObject.AddComponent<ARCameraBackground>();
 
+            // Add TrackedPoseDriver to camera
+            var trackedPoseDriver = cameraObject.AddComponent<UnityEngine.InputSystem.XR.TrackedPoseDriver>();
+            trackedPoseDriver.positionInput = new UnityEngine.InputSystem.InputActionProperty(
+                new UnityEngine.InputSystem.InputAction("Position", binding: "<XRHMD>/centerEyePosition"));
+            trackedPoseDriver.rotationInput = new UnityEngine.InputSystem.InputActionProperty(
+                new UnityEngine.InputSystem.InputAction("Rotation", binding: "<XRHMD>/centerEyeRotation"));
+            trackedPoseDriver.trackingType = UnityEngine.InputSystem.XR.TrackedPoseDriver.TrackingType.RotationAndPosition;
+
             // Set camera in XR Origin
             xrOrigin.Camera = arCamera;
 
@@ -200,6 +208,11 @@ public class ARWallPaintingCreator : MonoBehaviour
             // Create color picker panel
             colorPickerPanel = new GameObject("Color Picker Panel");
             colorPickerPanel.transform.parent = canvasObject.transform;
+            RectTransform panelRect = colorPickerPanel.AddComponent<RectTransform>();
+            panelRect.anchorMin = new Vector2(0.1f, 0.1f);
+            panelRect.anchorMax = new Vector2(0.9f, 0.3f);
+            panelRect.anchoredPosition = Vector2.zero;
+            panelRect.sizeDelta = Vector2.zero;
 
             // Add color buttons
             AddColorButton(colorPickerPanel, "Red", Color.red);
@@ -256,7 +269,7 @@ public class ARWallPaintingCreator : MonoBehaviour
             sliderLabel.transform.SetParent(sliderObject.transform, false);
             Text labelText = sliderLabel.AddComponent<Text>();
             labelText.text = "Opacity";
-            labelText.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+            labelText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             labelText.fontSize = 14;
             labelText.alignment = TextAnchor.MiddleCenter;
             labelText.color = Color.white;
@@ -266,12 +279,6 @@ public class ARWallPaintingCreator : MonoBehaviour
             labelRect.anchorMax = new Vector2(1, 1);
             labelRect.anchoredPosition = new Vector2(0, 10);
             labelRect.sizeDelta = new Vector2(0, 20);
-
-            RectTransform panelRect = colorPickerPanel.GetComponent<RectTransform>();
-            panelRect.anchorMin = new Vector2(0.1f, 0.1f);
-            panelRect.anchorMax = new Vector2(0.9f, 0.3f);
-            panelRect.anchoredPosition = Vector2.zero;
-            panelRect.sizeDelta = Vector2.zero;
       }
 
       /// <summary>
@@ -418,7 +425,7 @@ public class ARWallPaintingCreator : MonoBehaviour
             shareTextObject.transform.parent = shareButtonObject.transform;
             Text shareText = shareTextObject.AddComponent<Text>();
             shareText.text = "Share";
-            shareText.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+            shareText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             shareText.alignment = TextAnchor.MiddleCenter;
             shareText.color = Color.white;
 
@@ -449,7 +456,7 @@ public class ARWallPaintingCreator : MonoBehaviour
             closeTextObject.transform.parent = closeButtonObject.transform;
             Text closeText = closeTextObject.AddComponent<Text>();
             closeText.text = "Close";
-            closeText.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+            closeText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             closeText.alignment = TextAnchor.MiddleCenter;
             closeText.color = Color.white;
 
@@ -528,7 +535,7 @@ public class ARWallPaintingCreator : MonoBehaviour
             pickTextObject.transform.parent = pickButtonObject.transform;
             Text pickText = pickTextObject.AddComponent<Text>();
             pickText.text = "Pick Image";
-            pickText.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+            pickText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             pickText.alignment = TextAnchor.MiddleCenter;
             pickText.color = Color.white;
 
@@ -559,7 +566,7 @@ public class ARWallPaintingCreator : MonoBehaviour
             modeTextObject.transform.parent = modeToggleObject.transform;
             Text modeText = modeTextObject.AddComponent<Text>();
             modeText.text = "Photo";
-            modeText.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+            modeText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             modeText.alignment = TextAnchor.MiddleCenter;
             modeText.color = Color.white;
             modeText.fontSize = 12;

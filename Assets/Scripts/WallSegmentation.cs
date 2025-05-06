@@ -145,7 +145,9 @@ public class WallSegmentation : MonoBehaviour
         // Проверка наличия компонента для отображения отладки
         if (showDebugVisualisation && debugImage == null)
         {
-            Debug.LogError("Включена визуализация отладки (showDebugVisualisation), но не назначен компонент debugImage!");
+            Debug.LogWarning("Включена визуализация отладки (showDebugVisualisation), но не назначен компонент debugImage. Отладочный дисплей будет автоматически создан при необходимости.");
+            // Попробуем найти RawImage в сцене
+            debugImage = FindObjectOfType<RawImage>();
         }
 
         // Проверяем размер входных данных и предупреждаем если они слишком большие
@@ -251,57 +253,71 @@ public class WallSegmentation : MonoBehaviour
         {
             // Проверяем существование входа с заданным именем
             bool inputFound = false;
+            Unity.Barracuda.Model.Input? foundInput = default;
             foreach (var input in model.inputs)
             {
-                if (input.name == inputName)
+                // Безопасно извлекаем имя без проверки на null
+                string inputLayerName = input.name;
+
+                if (inputLayerName == inputName)
                 {
                     inputFound = true;
-
-                    // Если нашли вход, проверяем его форму и обновляем параметры
-                    try
-                    {
-                        // Пробуем получить размерности тензора
-                        int width = (int)input.shape[1];
-                        int height = (int)input.shape[2];
-                        int channels = (int)input.shape[3];
-
-                        // Проверяем на неверные значения и установка безопасных значений по умолчанию
-                        if (width <= 0 || height <= 0 || channels <= 0)
-                        {
-                            Debug.LogWarning($"Обнаружены неверные размеры тензора: {width}x{height}x{channels}. Устанавливаем безопасные значения по умолчанию.");
-                            useDefaultValues = true;
-                        }
-                        else
-                        {
-                            inputWidth = width;
-                            inputHeight = height;
-                            inputChannels = channels;
-
-                            Debug.Log($"Найден вход '{inputName}' с размерами {inputWidth}x{inputHeight}x{inputChannels}");
-                        }
-                    }
-                    catch (System.Exception e)
-                    {
-                        Debug.LogWarning($"Ошибка при получении размеров тензора: {e.Message}. Устанавливаем безопасные значения по умолчанию.");
-                        useDefaultValues = true;
-                    }
+                    foundInput = input;
+                    break;
                 }
             }
 
-            if (!inputFound)
+            if (inputFound && foundInput.HasValue)
+            {
+                // Если нашли вход, проверяем его форму и обновляем параметры
+                try
+                {
+                    // Пробуем получить размерности тензора
+                    var input = foundInput.Value;
+                    int width = (int)input.shape[1];
+                    int height = (int)input.shape[2];
+                    int channels = (int)input.shape[3];
+
+                    // Проверяем на неверные значения и установка безопасных значений по умолчанию
+                    if (width <= 0 || height <= 0 || channels <= 0)
+                    {
+                        Debug.LogWarning($"Обнаружены неверные размеры тензора: {width}x{height}x{channels}. Устанавливаем безопасные значения по умолчанию.");
+                        useDefaultValues = true;
+                    }
+                    else
+                    {
+                        inputWidth = width;
+                        inputHeight = height;
+                        inputChannels = channels;
+
+                        Debug.Log($"Найден вход '{inputName}' с размерами {inputWidth}x{inputHeight}x{inputChannels}");
+                    }
+                }
+                catch (System.Exception e)
+                {
+                    Debug.LogWarning($"Ошибка при получении размеров тензора: {e.Message}. Устанавливаем безопасные значения по умолчанию.");
+                    useDefaultValues = true;
+                }
+            }
+            else if (!inputFound)
             {
                 // Если не нашли вход с заданным именем, берем первый доступный
                 if (model.inputs.Count > 0)
                 {
-                    inputName = model.inputs[0].name;
+                    // Получаем имя первого входа безопасным способом
+                    var firstInput = model.inputs[0];
+                    string firstInputName = firstInput.name;
+
+                    inputName = firstInputName;
+                    Debug.LogWarning($"Вход '{inputName}' не найден. Используем первый доступный вход: '{firstInputName}'");
 
                     // Обновляем размерности из найденного входа
                     try
                     {
                         // Пробуем получить размерности тензора
-                        int width = (int)model.inputs[0].shape[1];
-                        int height = (int)model.inputs[0].shape[2];
-                        int channels = (int)model.inputs[0].shape[3];
+                        int width = (int)firstInput.shape[1];
+                        int height = (int)firstInput.shape[2];
+                        int channels = (int)firstInput.shape[3];
 
                         // Проверка на корректность значений
                         if (width <= 0 || height <= 0 || channels <= 0)
@@ -394,10 +410,14 @@ public class WallSegmentation : MonoBehaviour
                 worker = null;
             }
 
-            // Если уже есть модель, очищаем ее
+            // Если уже есть модель, очищаем ресурсы
             if (model != null)
             {
+                // Используем безопасное освобождение ресурсов
+                // Barracuda 2.0+ не имеет метода Dispose для Model
+#if UNITY_BARRACUDA_1_0_OR_NEWER
                 model.Dispose();
+#endif
                 model = null;
             }
 
@@ -436,7 +456,8 @@ public class WallSegmentation : MonoBehaviour
                             if (File.Exists(modelPath))
                             {
                                 byte[] modelData = File.ReadAllBytes(modelPath);
-                                model = ModelLoader.LoadFromBytes(modelData);
+                                // Используем другой метод загрузки вместо LoadFromBytes
+                                model = ModelLoader.Load(modelData);
                                 Debug.Log($"Успешно загружена модель из StreamingAssets: {modelPath}");
                             }
                             else
@@ -447,7 +468,20 @@ public class WallSegmentation : MonoBehaviour
                                 {
                                     model = ModelLoader.Load(allModels[0]);
                                     currentModelAsset = allModels[0];
-                                    Debug.Log($"Загружена первая доступная модель: {currentModelAsset.name}");
+
+                                    // Находим название модели для отладки
+                                    string modelName = "Unknown";
+                                    if (currentModelAsset != null)
+                                    {
+                                        // Safely get model name from asset
+                                        modelName = currentModelAsset.name;
+                                    }
+                                    else if (!string.IsNullOrEmpty(externalModelPath))
+                                    {
+                                        modelName = System.IO.Path.GetFileName(externalModelPath);
+                                    }
+
+                                    Debug.Log($"Загружена первая доступная модель: {modelName}");
                                 }
                                 else
                                 {
@@ -481,14 +515,43 @@ public class WallSegmentation : MonoBehaviour
             }
 
             // Проверяем наличие нужных входов/выходов в модели
-            if (!model.inputs.Any(i => i.name == inputName))
+            bool hasInputName = false;
+            bool hasOutputName = false;
+
+            // Проходим по всем входам модели и проверяем наличие нужного имени
+            foreach (var input in model.inputs)
+            {
+                // Безопасно извлекаем имя без проверки на null
+                string inputLayerName = input.name;
+
+                if (inputLayerName == inputName)
+                {
+                    hasInputName = true;
+                    break;
+                }
+            }
+
+            if (!hasInputName)
             {
                 Debug.LogError($"В модели нет входа с именем {inputName}. Переключение в демо-режим.");
                 SwitchToDemoMode();
                 return;
             }
 
-            if (!model.outputs.Any(o => o.name == outputName))
+            // Проходим по всем выходам модели и проверяем наличие нужного имени
+            foreach (var output in model.outputs)
+            {
+                // Model outputs are just strings in this case, not complex objects
+                string outputLayerName = output;
+
+                if (outputLayerName == outputName)
+                {
+                    hasOutputName = true;
+                    break;
+                }
+            }
+
+            if (!hasOutputName)
             {
                 Debug.LogError($"В модели нет выхода с именем {outputName}. Переключение в демо-режим.");
                 SwitchToDemoMode();
@@ -591,7 +654,13 @@ public class WallSegmentation : MonoBehaviour
             var buffer = new byte[size];
 
             // Конвертируем изображение в буфер
-            image.Convert(conversionParams, buffer, buffer.Length);
+            unsafe
+            {
+                fixed (byte* ptr = buffer)
+                {
+                    image.Convert(conversionParams, new IntPtr(ptr), buffer.Length);
+                }
+            }
 
             // Освобождаем ресурсы изображения
             image.Dispose();
@@ -672,7 +741,41 @@ public class WallSegmentation : MonoBehaviour
             worker.Execute(inputTensor);
 
             // Получаем результат из выходного тензора
-            Tensor outputTensor = worker.PeekOutput(outputName);
+            Tensor outputTensor = null;
+
+            // Безопасное получение выходного тензора
+            try
+            {
+                string firstOutputName = "";
+                if (model != null && model.outputs.Count > 0)
+                {
+                    // Get the name directly from outputs collection
+                    firstOutputName = model.outputs[0];
+                    outputTensor = worker.PeekOutput(firstOutputName);
+                }
+                else if (!string.IsNullOrEmpty(outputName))
+                {
+                    // Use the predefined output name directly
+                    outputTensor = worker.PeekOutput(outputName);
+                }
+
+                if (outputTensor == null)
+                {
+                    Debug.LogError("Не удалось получить выходной тензор: выходной тензор равен null");
+                    errorCount++;
+                    if (errorCount > 3)
+                    {
+                        Debug.LogWarning("Слишком много ошибок при получении тензора. Переключаемся в демо-режим.");
+                        SwitchToDemoMode();
+                    }
+                    return DemoSegmentation(sourceTexture);
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"Ошибка при получении выходного тензора: {e.Message}");
+                return DemoSegmentation(sourceTexture);
+            }
 
             // Создаем текстуру сегментации на основе результата модели
             Texture2D segmentationResult = CreateSegmentationTexture(outputTensor, sourceTexture.width, sourceTexture.height);
@@ -1020,10 +1123,11 @@ public class WallSegmentation : MonoBehaviour
         // Ждем один кадр для лучшей отзывчивости UI
         yield return null;
 
+        Texture2D resultTexture = null;
+
         try
         {
             // Обработка изображения через модель или демо-режим
-            Texture2D resultTexture;
             if (useDemoMode || forceDemoMode)
             {
                 resultTexture = DemoSegmentation(sourceTexture);
@@ -1032,56 +1136,54 @@ public class WallSegmentation : MonoBehaviour
             {
                 resultTexture = RunModelSegmentation(sourceTexture);
             }
-
-            // Загружаем результат сегментации
-            if (resultTexture != null)
-            {
-                segmentationTexture = resultTexture;
-
-                // Копируем результат в RenderTexture для использования в шейдере
-                if (_outputRenderTexture != null)
-                {
-                    // Убедимся, что RenderTexture имеет правильный размер
-                    if (_outputRenderTexture.width != resultTexture.width ||
-                        _outputRenderTexture.height != resultTexture.height)
-                    {
-                        // Пересоздаем RenderTexture с правильным размером
-                        if (_outputRenderTexture != null)
-                            _outputRenderTexture.Release();
-
-                        _outputRenderTexture = new RenderTexture(
-                            resultTexture.width,
-                            resultTexture.height,
-                            0,
-                            RenderTextureFormat.R8);
-                        _outputRenderTexture.Create();
-                    }
-
-                    // Копируем данные в RenderTexture
-                    Graphics.Blit(resultTexture, _outputRenderTexture);
-                }
-
-                // Показываем отладочное изображение, если нужно
-                if (showDebugVisualisation && debugImage != null)
-                {
-                    debugImage.texture = resultTexture;
-                }
-
-                // Обновляем статус плоскостей на основе сегментации
-                if (useARPlaneController)
-                {
-                    yield return StartCoroutine(UpdatePlanesBasedOnSegmentation());
-                }
-            }
         }
         catch (System.Exception e)
         {
             Debug.LogError($"Ошибка при асинхронной обработке изображения: {e.Message}");
         }
-        finally
+
+        // Применяем результаты вне блока try-catch
+        if (resultTexture != null)
         {
-            // Завершаем обработку
-            isProcessing = false;
+            segmentationTexture = resultTexture;
+
+            // Копируем результат в RenderTexture для использования в шейдере
+            if (_outputRenderTexture != null)
+            {
+                // Убедимся, что RenderTexture имеет правильный размер
+                if (_outputRenderTexture.width != resultTexture.width ||
+                    _outputRenderTexture.height != resultTexture.height)
+                {
+                    // Пересоздаем RenderTexture с правильным размером
+                    if (_outputRenderTexture != null)
+                        _outputRenderTexture.Release();
+
+                    _outputRenderTexture = new RenderTexture(
+                        resultTexture.width,
+                        resultTexture.height,
+                        0,
+                        RenderTextureFormat.R8);
+                    _outputRenderTexture.Create();
+                }
+
+                // Копируем данные в RenderTexture
+                Graphics.Blit(resultTexture, _outputRenderTexture);
+            }
+
+            // Показываем отладочное изображение, если нужно
+            if (showDebugVisualisation && debugImage != null)
+            {
+                debugImage.texture = resultTexture;
+            }
+
+            // Обновляем статус плоскостей на основе сегментации
+            if (useARPlaneController)
+            {
+                yield return StartCoroutine(UpdatePlanesBasedOnSegmentation());
+            }
         }
+
+        // Завершаем обработку
+        isProcessing = false;
     }
 }

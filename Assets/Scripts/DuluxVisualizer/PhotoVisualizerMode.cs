@@ -10,13 +10,13 @@ using System.IO;
 public class PhotoVisualizerMode : MonoBehaviour
 {
       [Header("UI Components")]
-      [SerializeField] private Button pickImageButton;
-      [SerializeField] private RawImage photoDisplayImage;
-      [SerializeField] private GameObject photoVisualizerPanel;
+      [SerializeField] public Button pickImageButton;
+      [SerializeField] public RawImage photoDisplayImage;
+      [SerializeField] public GameObject photoVisualizerPanel;
 
       [Header("Segmentation")]
-      [SerializeField] private WallSegmentation wallSegmentation;
-      [SerializeField] private WallPaintBlit wallPaintBlit;
+      [SerializeField] public WallSegmentation wallSegmentation;
+      [SerializeField] public WallPaintBlit wallPaintBlit;
 
       // Loaded photo texture
       private Texture2D loadedPhotoTexture;
@@ -45,8 +45,8 @@ public class PhotoVisualizerMode : MonoBehaviour
       private void CheckARSupport()
       {
 #if UNITY_EDITOR
-        // In editor, we can toggle between modes for testing
-        return;
+            // In editor, we can toggle between modes for testing
+            return;
 #elif UNITY_IOS || UNITY_ANDROID
         // Check for AR support on mobile devices
         bool arSupported = IsARSupported();
@@ -68,8 +68,8 @@ public class PhotoVisualizerMode : MonoBehaviour
         // For Android, check ARCore availability
         return IsARCoreSupported();
 #elif UNITY_IOS
-        // For iOS, check ARKit availability (requires iOS 11+)
-        return IsARKitSupported();
+            // For iOS, check ARKit availability (requires iOS 11+)
+            return IsARKitSupported();
 #else
             // For other platforms, assume no AR support
             return false;
@@ -93,16 +93,16 @@ public class PhotoVisualizerMode : MonoBehaviour
 #endif
 
 #if UNITY_IOS
-    /// <summary>
-    /// Checks if ARKit is supported on this device
-    /// </summary>
-    private bool IsARKitSupported()
-    {
-        // ARKit requires iOS 11+
-        // In a real app, use Unity's ARKit availability check
-        // For now, assume supported on iOS
-        return true;
-    }
+      /// <summary>
+      /// Checks if ARKit is supported on this device
+      /// </summary>
+      private bool IsARKitSupported()
+      {
+            // ARKit requires iOS 11+
+            // In a real app, use Unity's ARKit availability check
+            // For now, assume supported on iOS
+            return true;
+      }
 #endif
 
       /// <summary>
@@ -151,8 +151,8 @@ public class PhotoVisualizerMode : MonoBehaviour
         // On Android, use native intent system
         StartAndroidImagePicker();
 #elif UNITY_IOS
-        // On iOS, use native picker
-        StartIOSImagePicker();
+            // On iOS, use native picker
+            StartIOSImagePicker();
 #else
             // For editor testing, load a test image
             LoadTestImage();
@@ -187,16 +187,16 @@ public class PhotoVisualizerMode : MonoBehaviour
 #endif
 
 #if UNITY_IOS
-    /// <summary>
-    /// Starts the native iOS image picker
-    /// </summary>
-    private void StartIOSImagePicker()
-    {
-        // On iOS, you would typically use a native plugin like NativeGallery
-        // For this example, use a test image in the editor
-        Debug.Log("iOS image picker would be implemented here");
-        LoadTestImage();
-    }
+      /// <summary>
+      /// Starts the native iOS image picker
+      /// </summary>
+      private void StartIOSImagePicker()
+      {
+            // On iOS, you would typically use a native plugin like NativeGallery
+            // For this example, use a test image in the editor
+            Debug.Log("iOS image picker would be implemented here");
+            LoadTestImage();
+      }
 #endif
 
       /// <summary>

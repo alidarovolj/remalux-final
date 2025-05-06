@@ -10,10 +10,10 @@ using System;
 public class CaptureAndShare : MonoBehaviour
 {
       [Header("UI Components")]
-      [SerializeField] private Button captureButton;
-      [SerializeField] private Button shareButton;
-      [SerializeField] private RawImage previewImage;
-      [SerializeField] private GameObject previewPanel;
+      [SerializeField] public Button captureButton;
+      [SerializeField] public Button shareButton;
+      [SerializeField] public RawImage previewImage;
+      [SerializeField] public GameObject previewPanel;
 
       [Header("Settings")]
       [SerializeField] private string fileNamePrefix = "DuluxVisualizer_";
@@ -145,9 +145,9 @@ public class CaptureAndShare : MonoBehaviour
         AndroidJavaObject chooser = intentClass.CallStatic<AndroidJavaObject>("createChooser", intentObject, "Share your wall visualization");
         currentActivity.Call("startActivity", chooser);
 #elif UNITY_IOS
-        // For iOS, use NativeShare plugin or the native iOS sharing
-        Debug.Log("Sharing on iOS...");
-        // In a real implementation, you would use the NativeShare plugin or similar
+            // For iOS, use NativeShare plugin or the native iOS sharing
+            Debug.Log("Sharing on iOS...");
+            // In a real implementation, you would use the NativeShare plugin or similar
 #else
             // For other platforms, just show a message
             Debug.Log("Sharing not supported on this platform. Screenshot saved at: " + capturedImagePath);

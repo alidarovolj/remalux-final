@@ -52,7 +52,7 @@ public static class TextureScale
             // используем однопоточную обработку
             if (slice < 10 || cores <= 1)
             {
-                  BilinearScale(0, newHeight);
+                  BilinearScale(new int[] { 0, newHeight });
             }
             else
             {
@@ -75,7 +75,7 @@ public static class TextureScale
             mutex.ReleaseMutex();
 
             // Применяем новые цвета к текстуре
-            tex.Resize(newWidth, newHeight);
+            tex.Reinitialize(newWidth, newHeight);
             tex.SetPixels(newColors);
             tex.Apply();
       }
