@@ -1,0 +1,47 @@
+# Required Unity Packages for AR Wall Painting
+
+To use this AR Wall Painting system, please make sure the following Unity packages are installed:
+
+1. **AR Foundation**
+   - Package name: `com.unity.xr.arfoundation`
+   - Version: 4.1.7 or newer
+   - Provides base AR functionality
+
+2. **ARKit XR Plugin** (for iOS)
+   - Package name: `com.unity.xr.arkit`
+   - Version: 4.1.7 or newer
+   - Enables ARKit integration on iOS devices
+
+3. **ARCore XR Plugin** (for Android)
+   - Package name: `com.unity.xr.arcore`
+   - Version: 4.1.7 or newer
+   - Enables ARCore integration on Android devices
+
+4. **Barracuda**
+   - Package name: `com.unity.barracuda`
+   - Version: 2.0.0 or newer
+   - Neural network inference library for running ONNX models
+
+5. **Unity XR Core Utils**
+   - Package name: `com.unity.xr.core-utils`
+   - Version: 2.0.0 or newer
+   - Core utilities for XR development
+
+## How to Install Packages
+
+1. Open the Unity Package Manager (Window > Package Manager)
+2. Click the "+" button in the top-left corner
+3. Select "Add package by name..."
+4. Enter each package name (e.g., `com.unity.xr.arfoundation`) and click "Add"
+5. Repeat for all required packages
+
+## Resolving Compiler Errors
+
+If you see compiler errors related to missing namespaces such as:
+- `Unity.Barracuda`
+- `UnityEngine.XR.ARFoundation`
+- `Unity.XR.CoreUtils`
+
+It means that you need to install the corresponding packages listed above.
+
+After installing these packages, the compiler errors should be resolved, and the AR Wall Painting system should work correctly. 

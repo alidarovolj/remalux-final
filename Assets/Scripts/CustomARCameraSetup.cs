@@ -36,14 +36,6 @@ public class CustomARCameraSetup : MonoBehaviour
             if (simCamObj != null)
             {
                 simulationCamera = simCamObj.GetComponent<Camera>();
-
-#if UNITY_EDITOR
-                // Убедимся, что к симуляционной камере прикреплен контроллер
-                if (simulationCamera != null && !simCamObj.GetComponent<EditorCameraController>())
-                {
-                    simCamObj.AddComponent<EditorCameraController>();
-                }
-#endif
             }
         }
 

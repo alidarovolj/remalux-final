@@ -1,4 +1,4 @@
-Shader "Custom/WallPaint"
+Shader "Hidden/WallPaint"
 {
     Properties
     {

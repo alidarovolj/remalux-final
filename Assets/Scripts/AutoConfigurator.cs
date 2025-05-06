@@ -7,21 +7,8 @@ public class AutoConfigurator : MonoBehaviour
 {
     private void Awake()
     {
-        // Конфигурируем RuntimeSetupManager
-        var runtimeSetupManager = GameObject.Find("RuntimeSetupManager");
-        if (runtimeSetupManager != null)
-        {
-            if (runtimeSetupManager.GetComponent<RuntimeSetupManager>() == null)
-            {
-                runtimeSetupManager.AddComponent<RuntimeSetupManager>();
-                Debug.Log("Добавлен компонент RuntimeSetupManager");
-            }
-        }
-        else
-        {
-            Debug.LogWarning("Объект RuntimeSetupManager не найден");
-        }
-        
+        // Убрали ссылки на RuntimeSetupManager
+
         // Конфигурируем WallSegmentation
         var wallSegmentationManager = GameObject.Find("WallSegmentationManager");
         if (wallSegmentationManager != null)
@@ -37,8 +24,8 @@ public class AutoConfigurator : MonoBehaviour
         {
             Debug.LogWarning("Объект WallSegmentationManager не найден");
         }
-        
+
         // Отключаем себя после выполнения
         enabled = false;
     }
-} 
+}

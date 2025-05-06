@@ -27,16 +27,16 @@ public class WallSegmentation : MonoBehaviour
     }
 
     [Header("AR Components")]
-    [SerializeField] private ARCameraManager cameraManager;
+    [SerializeField] public ARCameraManager cameraManager;
     [SerializeField] private Camera arCamera;
-    
+
     [Header("Segmentation Mode")]
     [SerializeField] private SegmentationMode currentMode = SegmentationMode.ExternalModel;
     [SerializeField] private string externalModelPath = "Models/model.onnx"; // Изменено на новую модель SegFormer
-    
+
     [Header("Barracuda Model")]
-    [SerializeField] private NNModel modelAsset; // Модель ONNX через asset
-    
+    [SerializeField] public NNModel modelAsset; // Модель ONNX через asset
+
     [Header("Segmentation Parameters")]
     [SerializeField] private int inputWidth = 32; // Для BiseNet.onnx должно быть 960
     [SerializeField] private int inputHeight = 32; // Для BiseNet.onnx должно быть 720
@@ -45,7 +45,7 @@ public class WallSegmentation : MonoBehaviour
     [SerializeField] private string outputName = "logits"; // Для использования BiseNet.onnx изменить на "predict"
     [SerializeField, Range(0, 1)] private float threshold = 0.5f;
     [SerializeField] private int wallClassIndex = 9; // Для model.onnx лучше использовать 0 или 3
-    
+
     [Header("Debug & Performance")]
     [SerializeField] private bool forceDemoMode = false; // Отключаем принудительный демо-режим
     [SerializeField] private bool showDebugVisualisation = true;
@@ -54,11 +54,19 @@ public class WallSegmentation : MonoBehaviour
     [SerializeField] private bool enableDebugLogs = true; // Добавлен флаг включения отладочных логов
     [SerializeField] private bool debugPositioning = true; // Флаг для отладки позиционирования стен (включен по умолчанию)
     [SerializeField] private bool useARPlaneController = true; // Использовать ARPlaneController для управления плоскостями
-    
+
     [Header("Wall Visualization")]
     [SerializeField] private Material wallMaterial; // Материал для стен
     [SerializeField] private Color wallColor = new Color(0.2f, 0.5f, 0.9f, 0.8f); // Цвет для визуализации стен
-    
+    [SerializeField] private RenderTexture _outputRenderTexture; // Выходная маска сегментации для внешнего использования
+
+    // Property to access the output render texture
+    public RenderTexture outputRenderTexture
+    {
+        get { return _outputRenderTexture; }
+        set { _outputRenderTexture = value; }
+    }
+
     // Приватные переменные
     private Texture2D cameraTexture;
     private Texture2D segmentationTexture;
@@ -81,13 +89,13 @@ public class WallSegmentation : MonoBehaviour
         {
             useDemoMode = true;
         }
-        
+
         // Проверяем наличие ARCameraManager для получения изображения с камеры
         if (cameraManager == null)
         {
             cameraManager = FindObjectOfType<ARCameraManager>();
         }
-        
+
         if (cameraManager != null)
         {
             cameraManager.frameReceived += OnCameraFrameReceived;
@@ -97,7 +105,7 @@ public class WallSegmentation : MonoBehaviour
             Debug.LogError("AR Camera Manager не найден. Переключение в демо-режим.");
             SwitchToDemoMode();
         }
-        
+
         // Проверка начальных размеров параметров модели
         if (inputWidth <= 0 || inputHeight <= 0)
         {
@@ -107,17 +115,17 @@ public class WallSegmentation : MonoBehaviour
             inputChannels = 32;
             SwitchToDemoMode();
         }
-        
+
         // Предупреждение о большом размере входных данных
         if (inputWidth * inputHeight > 65536)
         {
             Debug.LogWarning($"Размер входных данных ({inputWidth}x{inputHeight}={inputWidth * inputHeight} пикселей) может быть слишком большим для модели. Рекомендуемый максимум: 256x256=65536 пикселей.");
         }
-        
+
         // Инициализируем текстуры с безопасными размерами по умолчанию
         int textureWidth = 256;
         int textureHeight = 256;
-        
+
         // Проверяем и обновляем размеры текстуры на основе параметров модели
         if (inputWidth > 0 && inputHeight > 0)
         {
@@ -128,16 +136,16 @@ public class WallSegmentation : MonoBehaviour
         {
             Debug.LogWarning($"Некорректные размеры входа модели: {inputWidth}x{inputHeight}. Используем безопасные значения по умолчанию: {textureWidth}x{textureHeight}");
         }
-        
+
         cameraTexture = new Texture2D(textureWidth, textureHeight, TextureFormat.RGBA32, false);
         segmentationTexture = new Texture2D(textureWidth, textureHeight, TextureFormat.RGBA32, false);
-        
+
         // Проверка наличия компонента для отображения отладки
         if (showDebugVisualisation && debugImage == null)
         {
             Debug.LogError("Включена визуализация отладки (showDebugVisualisation), но не назначен компонент debugImage!");
         }
-        
+
         // Проверяем размер входных данных и предупреждаем если они слишком большие
         int totalPixels = inputWidth * inputHeight;
         if (totalPixels > 65536)
@@ -145,27 +153,27 @@ public class WallSegmentation : MonoBehaviour
             Debug.LogWarning($"Размер входных данных ({inputWidth}x{inputHeight}={totalPixels}) может быть слишком большим для модели. " +
                            "Рекомендуемый максимум: 256x256=65536 пикселей.");
         }
-        
+
         // Загружаем нужную модель в зависимости от выбранного режима
         LoadSelectedModel();
-            
+
         // Подписка на событие обновления текстуры камеры
         if (cameraManager != null)
         {
             cameraManager.frameReceived += OnCameraFrameReceived;
         }
-        
+
         // Инициализация обработки через интервал времени
         StartCoroutine(ProcessFrames());
-        
+
         // Подписываемся на событие обнаружения новых плоскостей
         SubscribeToPlaneEvents();
-        
+
         // Автоматический запуск сегментации при запуске приложения
         if (currentMode == SegmentationMode.ExternalModel && !forceDemoMode)
         {
             Debug.Log("WallSegmentation: Запуск автоматической сегментации в режиме ExternalModel...");
-            
+
             // Через небольшую задержку запускаем первую сегментацию
             StartCoroutine(DelayedFirstSegmentationUpdate(3.0f));
         }
@@ -178,7 +186,7 @@ public class WallSegmentation : MonoBehaviour
         // Новый метод для принудительного включения отладочных настроек для всех визуализаторов плоскостей
         EnableDebugForAllVisualizers();
     }
-    
+
     /// <summary>
     /// Создает демо-сегментацию без использования модели
     /// </summary>
@@ -187,20 +195,20 @@ public class WallSegmentation : MonoBehaviour
         // Если модель сегментации имеет проблемы, используем простую демо-сегментацию
         int width = sourceTexture.width;
         int height = sourceTexture.height;
-        
+
         // Создаем новую текстуру для результата
         Texture2D resultTexture = new Texture2D(width, height, TextureFormat.RGBA32, false);
-        
+
         // Демонстрационная сегментация - просто выделяем центральную часть синим цветом
         for (int y = 0; y < height; y++)
         {
             for (int x = 0; x < width; x++)
             {
                 // Определяем, находится ли пиксель в центральной области (имитация стены)
-                bool isWall = 
-                    (x > width * 0.3f && x < width * 0.7f) && 
+                bool isWall =
+                    (x > width * 0.3f && x < width * 0.7f) &&
                     (y > height * 0.2f && y < height * 0.8f);
-                
+
                 // Устанавливаем цвет пикселя
                 if (isWall)
                 {
@@ -212,21 +220,21 @@ public class WallSegmentation : MonoBehaviour
                 }
             }
         }
-        
+
         resultTexture.Apply();
         Debug.LogWarning("Используется демо-режим сегментации");
         return resultTexture;
     }
-    
+
     // Переключение в демо-режим
     private void SwitchToDemoMode()
     {
         // Код метода SwitchToDemoMode
         useDemoMode = true;
     }
-    
+
     // Остальной код класса, необходимый для работы...
-    
+
     // Метод для проверки и обновления параметров модели
     private void CheckAndUpdateModelParameters()
     {
@@ -246,7 +254,7 @@ public class WallSegmentation : MonoBehaviour
                 if (input.name == inputName)
                 {
                     inputFound = true;
-                    
+
                     // Если нашли вход, проверяем его форму и обновляем параметры
                     try
                     {
@@ -254,7 +262,7 @@ public class WallSegmentation : MonoBehaviour
                         int width = (int)input.shape[1];
                         int height = (int)input.shape[2];
                         int channels = (int)input.shape[3];
-                        
+
                         // Проверяем на неверные значения и установка безопасных значений по умолчанию
                         if (width <= 0 || height <= 0 || channels <= 0)
                         {
@@ -266,7 +274,7 @@ public class WallSegmentation : MonoBehaviour
                             inputWidth = width;
                             inputHeight = height;
                             inputChannels = channels;
-                            
+
                             Debug.Log($"Найден вход '{inputName}' с размерами {inputWidth}x{inputHeight}x{inputChannels}");
                         }
                     }
@@ -277,14 +285,14 @@ public class WallSegmentation : MonoBehaviour
                     }
                 }
             }
-            
+
             if (!inputFound)
             {
                 // Если не нашли вход с заданным именем, берем первый доступный
                 if (model.inputs.Count > 0)
                 {
                     inputName = model.inputs[0].name;
-                    
+
                     // Обновляем размерности из найденного входа
                     try
                     {
@@ -292,7 +300,7 @@ public class WallSegmentation : MonoBehaviour
                         int width = (int)model.inputs[0].shape[1];
                         int height = (int)model.inputs[0].shape[2];
                         int channels = (int)model.inputs[0].shape[3];
-                        
+
                         // Проверка на корректность значений
                         if (width <= 0 || height <= 0 || channels <= 0)
                         {
@@ -304,7 +312,7 @@ public class WallSegmentation : MonoBehaviour
                             inputWidth = width;
                             inputHeight = height;
                             inputChannels = channels;
-                            
+
                             Debug.Log($"Найден вход '{inputName}' с размерами {inputWidth}x{inputHeight}x{inputChannels}");
                         }
                     }
@@ -320,7 +328,7 @@ public class WallSegmentation : MonoBehaviour
                     useDefaultValues = true;
                 }
             }
-            
+
             // Проверяем выходной тензор
             try
             {
@@ -333,7 +341,7 @@ public class WallSegmentation : MonoBehaviour
                         int outHeight = (int)outputTensorShape.Value[1];
                         int outWidth = (int)outputTensorShape.Value[2];
                         int outChannels = (int)outputTensorShape.Value[3];
-                        
+
                         // Проверяем корректность размеров выходного тензора
                         if (outHeight <= 0 || outWidth <= 0 || outChannels <= 0)
                         {
@@ -359,7 +367,7 @@ public class WallSegmentation : MonoBehaviour
                 Debug.LogWarning($"Ошибка при получении информации о выходном тензоре: {e.Message}");
             }
         }
-        
+
         // Устанавливаем безопасные значения по умолчанию, если необходимо
         if (useDefaultValues || inputWidth <= 0 || inputHeight <= 0 || inputChannels <= 0)
         {
@@ -369,33 +377,33 @@ public class WallSegmentation : MonoBehaviour
             Debug.LogWarning($"Установлены безопасные значения по умолчанию: {inputWidth}x{inputHeight}x{inputChannels}");
         }
     }
-    
+
     // Метод для загрузки модели
     private void LoadSelectedModel()
     {
         // Сбрасываем ссылку на текущую модель
         currentModelAsset = null;
-        
+
         // Проверяем общее количество пикселей для предотвращения ошибок 
         int totalPixels = inputWidth * inputHeight;
-        
+
         // Проверяем размер входных данных и уменьшаем если они слишком большие
         // Важно: максимальный безопасный размер для Barracuda - 256x256 пикселей
         if (inputWidth * inputHeight > 65536) // Превышен безопасный лимит (256x256)
         {
             int originalWidth = inputWidth;
             int originalHeight = inputHeight;
-            
+
             // Принудительно ограничиваем размер до 128x128
             inputWidth = 128;
             inputHeight = 128;
-            
+
             Debug.LogWarning($"Уменьшаем размер входных данных с {originalWidth}x{originalHeight} до {inputWidth}x{inputHeight} " +
                            "для предотвращения ошибок с лимитами GPU compute.");
         }
-        
+
         Debug.Log($"Используем размер входных данных для модели: {inputWidth}x{inputHeight} ({inputWidth * inputHeight} пикселей)");
-        
+
         // Проверяем, не превышает ли размер все еще безопасный лимит даже после коррекции
         if (inputWidth * inputHeight > 65536 && !forceDemoMode) // Больше чем 256x256
         {
@@ -403,52 +411,52 @@ public class WallSegmentation : MonoBehaviour
                            "Рекомендуем использовать размер 128x128. Включаем демо-режим для безопасности.");
             forceDemoMode = true;
             useDemoMode = true;
-            
+
             // Создаем демо-стены для отображения сразу
             if (demoWalls.Count == 0)
             {
                 CreateDemoWalls();
             }
-            
+
             // Завершаем загрузку - дальше нет смысла загружать модель
             return;
         }
-        
+
         // Принудительно устанавливаем демо-режим, если он выбран
         if (currentMode == SegmentationMode.Demo || forceDemoMode)
         {
             useDemoMode = true;
             Debug.Log("Используется демо-режим сегментации стен");
-            
+
             // Создаем демо-стены для отображения сразу
             if (demoWalls.Count == 0)
             {
                 CreateDemoWalls();
             }
-            
+
             return;
         }
-        
+
         // Если у нас есть существующий воркер, освобождаем его
         if (worker != null)
         {
             worker.Dispose();
             worker = null;
         }
-        
+
         // Остальная логика загрузки модели...
-        
+
         // Устанавливаем флаг инициализации
         isModelInitialized = true;
     }
-    
+
     // Создание демо-стен
     private void CreateDemoWalls()
     {
         Debug.Log("Создание демо-стен для визуализации");
         // Здесь должна быть реализация создания демонстрационных стен
     }
-    
+
     // Полная реализация методов-заглушек для процесса обработки кадров и подписки на события
     private IEnumerator ProcessFrames()
     {
@@ -459,38 +467,38 @@ public class WallSegmentation : MonoBehaviour
                 // Обработка кадра
                 Debug.Log("Обработка кадра");
             }
-            
+
             yield return new WaitForSeconds(processingInterval);
         }
     }
-    
-    private void SubscribeToPlaneEvents() 
+
+    private void SubscribeToPlaneEvents()
     {
         Debug.Log("Подписка на события плоскостей");
     }
-    
-    private IEnumerator DelayedFirstSegmentationUpdate() 
-    { 
+
+    private IEnumerator DelayedFirstSegmentationUpdate()
+    {
         Debug.Log("Обновление сегментации с задержкой");
-        yield return new WaitForSeconds(2.0f); 
+        yield return new WaitForSeconds(2.0f);
     }
-    
-    private IEnumerator DelayedFirstSegmentationUpdate(float delayTime) 
-    { 
+
+    private IEnumerator DelayedFirstSegmentationUpdate(float delayTime)
+    {
         Debug.Log($"Обновление сегментации с задержкой {delayTime} сек");
-        yield return new WaitForSeconds(delayTime); 
+        yield return new WaitForSeconds(delayTime);
     }
-    
-    private void EnableDebugForAllVisualizers() 
-    { 
+
+    private void EnableDebugForAllVisualizers()
+    {
         Debug.Log("Включение отладочной визуализации для всех визуализаторов");
     }
-    
-    private void OnCameraFrameReceived(ARCameraFrameEventArgs args) 
-    { 
+
+    private void OnCameraFrameReceived(ARCameraFrameEventArgs args)
+    {
         // Обработка кадра с камеры
     }
-    
+
     // Метод для запуска сегментации с моделью
     private Texture2D RunModelSegmentation(Texture2D sourceTexture)
     {
@@ -504,25 +512,25 @@ public class WallSegmentation : MonoBehaviour
         {
             // Получаем данные из текстуры и преобразуем их в формат для тензора
             float[] tensorData = ConvertTextureToTensor(sourceTexture, inputWidth, inputHeight, inputChannels);
-            
+
             // Создаем тензор с правильной сигнатурой - используя конструктор с поддержкой float[]
             // ПРИМЕЧАНИЕ: Unity Barracuda использует NHWC, но ONNX ожидает NCHW
             // Необходимо правильное преобразование форматов тензоров
             inputTensor = new Tensor(1, inputHeight, inputWidth, inputChannels, tensorData);
-            
+
             // Запускаем сеть
             worker.Execute(inputTensor);
-            
+
             // Получаем результат
             Tensor outputTensor = worker.PeekOutput(outputName);
-            
+
             // Проверка на корректность выходного тензора
             if (outputTensor == null)
             {
                 Debug.LogError($"Не удалось получить выходной тензор с именем {outputName}");
                 return DemoSegmentation(sourceTexture);
             }
-            
+
             // Преобразуем результат обратно в текстуру
             return CreateSegmentationTexture(outputTensor, sourceTexture.width, sourceTexture.height);
         }
@@ -541,29 +549,29 @@ public class WallSegmentation : MonoBehaviour
             }
         }
     }
-    
+
     // Вспомогательный метод для конвертации текстуры в тензор
     private float[] ConvertTextureToTensor(Texture2D texture, int width, int height, int channels)
     {
         // Создаем массив для данных тензора
         float[] tensorData = new float[width * height * channels];
-        
+
         // Если текстура имеет другие размеры, масштабируем ее
         Texture2D resizedTexture = texture;
         if (texture.width != width || texture.height != height)
         {
             RenderTexture rt = RenderTexture.GetTemporary(width, height, 0);
             Graphics.Blit(texture, rt);
-            
+
             RenderTexture.active = rt;
             resizedTexture = new Texture2D(width, height, TextureFormat.RGBA32, false);
             resizedTexture.ReadPixels(new Rect(0, 0, width, height), 0, 0);
             resizedTexture.Apply();
-            
+
             RenderTexture.active = null;
             RenderTexture.ReleaseTemporary(rt);
         }
-        
+
         // Копируем данные из текстуры в тензор
         Color[] pixels = resizedTexture.GetPixels();
         for (int i = 0; i < pixels.Length; i++)
@@ -574,7 +582,7 @@ public class WallSegmentation : MonoBehaviour
                 tensorData[i * channels] = pixels[i].r;
                 tensorData[i * channels + 1] = pixels[i].g;
                 tensorData[i * channels + 2] = pixels[i].b;
-                
+
                 // Остальные каналы заполняем значением из R-канала
                 for (int c = 3; c < channels; c++)
                 {
@@ -587,118 +595,110 @@ public class WallSegmentation : MonoBehaviour
                 tensorData[i] = pixels[i].grayscale;
             }
         }
-        
+
         // Освобождаем ресурсы
         if (resizedTexture != texture)
         {
             Destroy(resizedTexture);
         }
-        
+
         return tensorData;
     }
-    
-    // Метод для создания текстуры сегментации из тензора
+
+    /// <summary>
+    /// Создает текстуру сегментации на основе выходного тензора модели
+    /// </summary>
     private Texture2D CreateSegmentationTexture(Tensor outputTensor, int targetWidth, int targetHeight)
     {
-        // Определяем размер выходного тензора
-        int outBatch = outputTensor.shape[0];
-        int outChannels = outputTensor.shape[1]; // Для NCHW формата каналы идут после батча
-        int outHeight = outputTensor.shape[2];
-        int outWidth = outputTensor.shape[3];
-        
-        Debug.Log($"Размер выходного тензора: {outBatch}x{outChannels}x{outHeight}x{outWidth}");
-        
-        // Проверяем на некорректные размеры тензора
-        if (outHeight <= 0 || outWidth <= 0 || outChannels <= 0)
+        // Проверяем размеры тензора
+        if (outputTensor == null)
         {
-            Debug.LogWarning($"Модель вернула некорректные размеры тензора: {outBatch}x{outChannels}x{outHeight}x{outWidth}. Используем безопасные значения по умолчанию.");
-            
-            // Используем демо-режим в случае ошибки
-            return DemoSegmentation(new Texture2D(targetWidth, targetHeight, TextureFormat.RGBA32, false));
+            Debug.LogError("Output tensor is null!");
+            return null;
         }
-        
-        // Создаем новую текстуру для результата
-        var resultTexture = new Texture2D(outWidth, outHeight, TextureFormat.RGBA32, false);
-        
-        // Копируем данные из выходного тензора в текстуру
-        for (int h = 0; h < outHeight; h++)
+
+        int tensorWidth = outputTensor.width;
+        int tensorHeight = outputTensor.height;
+
+        // Если указан outputRenderTexture, обновляем его
+        if (_outputRenderTexture != null)
         {
-            for (int w = 0; w < outWidth; w++)
+            // Создаем текстуру для вывода
+            Texture2D resultTexture = new Texture2D(tensorWidth, tensorHeight, TextureFormat.RGBA32, false);
+
+            // Заполняем текстуру в соответствии с данными тензора
+            for (int y = 0; y < tensorHeight; y++)
             {
-                // Обрабатываем каждый пиксель результата
-                float maxValue = float.MinValue;
-                int bestClass = 0;
-                
-                // Находим класс с максимальным значением (в случае многоклассовой сегментации)
-                if (outChannels > 1)
+                for (int x = 0; x < tensorWidth; x++)
                 {
-                    for (int c = 0; c < outChannels; c++)
-                    {
-                        // Для NCHW формата
-                        float value = outputTensor[0, c, h, w];
-                        if (value > maxValue)
-                        {
-                            maxValue = value;
-                            bestClass = c;
-                        }
-                    }
-                }
-                else
-                {
-                    // Для одноканального выхода используем пороговое значение
-                    maxValue = outputTensor[0, 0, h, w];
-                    bestClass = maxValue > threshold ? 1 : 0;
-                }
-                
-                // Назначаем цвет в зависимости от класса (стена/не стена)
-                Color pixelColor;
-                if (bestClass == wallClassIndex)
-                {
-                    // Класс "стена"
-                    pixelColor = wallColor;
-                }
-                else
-                {
-                    // Класс "не стена" или другой класс
-                    pixelColor = Color.clear; // Прозрачный для не-стен
-                }
-                
-                resultTexture.SetPixel(w, h, pixelColor);
-            }
-        }
-        
-        resultTexture.Apply();
-        
-        // Если размеры выходного тензора отличаются от целевых размеров,
-        // выполняем масштабирование текстуры
-        if (outWidth != targetWidth || outHeight != targetHeight)
-        {
-            Texture2D scaledTexture = new Texture2D(targetWidth, targetHeight, TextureFormat.RGBA32, false);
-            float scaleX = (float)outWidth / targetWidth;
-            float scaleY = (float)outHeight / targetHeight;
-            
-            for (int y = 0; y < targetHeight; y++)
-            {
-                for (int x = 0; x < targetWidth; x++)
-                {
-                    // Простое масштабирование методом ближайшего соседа
-                    int srcX = Mathf.Min(Mathf.FloorToInt(x * scaleX), outWidth - 1);
-                    int srcY = Mathf.Min(Mathf.FloorToInt(y * scaleY), outHeight - 1);
-                    
-                    Color pixelColor = resultTexture.GetPixel(srcX, srcY);
-                    scaledTexture.SetPixel(x, y, pixelColor);
+                    // Получаем значение класса и вероятность для пикселя
+                    float value = outputTensor[0, y, x, 0]; // Первое измерение - индекс батча
+
+                    // Для одноканального выхода просто используем первый канал
+                    Color pixelColor = (value > threshold) ? Color.white : Color.black;
+                    resultTexture.SetPixel(x, y, pixelColor);
                 }
             }
-            
-            scaledTexture.Apply();
-            return scaledTexture;
+
+            // Применяем изменения
+            resultTexture.Apply();
+
+            // Обновляем render texture
+            RenderTexture prevRT = RenderTexture.active;
+            RenderTexture.active = _outputRenderTexture;
+            Graphics.Blit(resultTexture, _outputRenderTexture);
+            RenderTexture.active = prevRT;
+
+            return resultTexture;
         }
-        
-        return resultTexture;
+
+        // Оригинальный код для создания текстуры...
+        Texture2D segmentationTexture = new Texture2D(targetWidth, targetHeight, TextureFormat.RGBA32, false);
+
+        // Заполняем текстуру в соответствии с данными тензора
+        for (int y = 0; y < targetHeight; y++)
+        {
+            for (int x = 0; x < targetWidth; x++)
+            {
+                // Масштабируем координаты к размеру тензора
+                int tensorX = (int)(x * (float)tensorWidth / targetWidth);
+                int tensorY = (int)(y * (float)tensorHeight / targetHeight);
+
+                // Проверяем границы
+                tensorX = Mathf.Clamp(tensorX, 0, tensorWidth - 1);
+                tensorY = Mathf.Clamp(tensorY, 0, tensorHeight - 1);
+
+                // Получаем значение для пикселя
+                // Для сегментационных моделей обычно выходом является тензор [batch, height, width, classes]
+                float value = 0;
+
+                // Проверяем формат выходных данных модели
+                if (outputTensor.channels == 1) // Если это маска (1 канал)
+                {
+                    // Просто берем значение маски
+                    value = outputTensor[0, tensorY, tensorX, 0];
+                }
+                else // Если это multi-channel logits (несколько каналов)
+                {
+                    // Для модели с multi-class output, берем нужный класс (например, "wall" или "background")
+                    // Предполагаем, что wallClassIndex содержит индекс класса стен
+                    value = outputTensor[0, tensorY, tensorX, wallClassIndex];
+                }
+
+                // Применяем порог для бинарной сегментации
+                Color pixelColor = (value > threshold) ? Color.white : Color.black;
+                segmentationTexture.SetPixel(x, y, pixelColor);
+            }
+        }
+
+        // Применяем изменения
+        segmentationTexture.Apply();
+
+        return segmentationTexture;
     }
-    
+
     // Публичные методы, используемые другими скриптами
-    
+
     // Переключение режима сегментации
     public void SwitchMode(SegmentationMode newMode)
     {
@@ -710,31 +710,31 @@ public class WallSegmentation : MonoBehaviour
         }
 
         currentMode = newMode;
-        
+
         // Сохраняем текущее состояние демо-режима до загрузки модели
         bool wasUsingDemoMode = useDemoMode;
-        
+
         // Сбрасываем принудительный демо-режим
         useDemoMode = newMode == SegmentationMode.Demo;
-        
+
         // Сбрасываем счетчик ошибок
         errorCount = 0;
-        
+
         // Останавливаем текущий рабочий процесс, если он существует
         if (worker != null)
         {
             worker.Dispose();
             worker = null;
         }
-        
+
         // Загружаем и инициализируем новую модель
         LoadSelectedModel();
-        
+
         // Проверяем, изменился ли режим работы
         if (wasUsingDemoMode != useDemoMode)
         {
             Debug.Log($"Режим сегментации переключен: {newMode}, Демо-режим: {useDemoMode}");
-            
+
             // Дополнительная информация, если переключение в демо-режим произошло из-за ошибки
             if (useDemoMode && newMode != SegmentationMode.Demo)
             {
@@ -746,19 +746,19 @@ public class WallSegmentation : MonoBehaviour
             Debug.Log($"Режим сегментации переключен: {newMode}");
         }
     }
-    
+
     // Получение текущего режима
     public SegmentationMode GetCurrentMode()
     {
         return currentMode;
     }
-    
+
     // Проверка использования демо-режима
     public bool IsUsingDemoMode()
     {
         return useDemoMode || currentMode == SegmentationMode.Demo;
     }
-    
+
     // Обновляет статус всех AR плоскостей на основе результатов сегментации
     public int UpdatePlanesSegmentationStatus()
     {
@@ -766,30 +766,30 @@ public class WallSegmentation : MonoBehaviour
         // Заглушка, возвращает количество обновленных плоскостей
         return 0;
     }
-    
+
     // Получает текстуру сегментации
     public Texture2D GetSegmentationTexture()
     {
         return segmentationTexture;
     }
-    
+
     // Получает процент покрытия плоскости маской сегментации
     public float GetPlaneCoverageByMask(ARPlane plane)
     {
         // Заглушка, возвращает процент покрытия
         return 0.5f;
     }
-    
+
     // Включает/отключает отладочную визуализацию
     public void EnableDebugVisualization(bool enable)
     {
         showDebugVisualisation = enable;
-        
+
         // Если мы включаем визуализацию, убедимся что есть связь с RawImage
         if (enable && debugImage == null)
         {
             Debug.LogWarning("Отладочная визуализация включена, но RawImage не назначен");
-            
+
             // Можно попробовать найти RawImage автоматически
             debugImage = FindObjectOfType<RawImage>();
             if (debugImage == null)
@@ -798,10 +798,10 @@ public class WallSegmentation : MonoBehaviour
             }
         }
     }
-    
+
     // Проверка состояния отладочной визуализации
     public bool IsDebugVisualizationEnabled()
     {
         return showDebugVisualisation;
     }
-} 
+}
