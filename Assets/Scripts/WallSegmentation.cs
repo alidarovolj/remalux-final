@@ -435,7 +435,7 @@ public class WallSegmentation : MonoBehaviour
                 case SegmentationMode.EmbeddedModel:
                     if (modelAsset != null)
                     {
-                        model = ModelLoader.Load(modelAsset);
+                        model = Unity.Barracuda.ModelLoader.Load(modelAsset);
                         currentModelAsset = modelAsset;
                     }
                     else
@@ -459,7 +459,7 @@ public class WallSegmentation : MonoBehaviour
                             try
                             {
                                 byte[] modelData = System.IO.File.ReadAllBytes(preferredModelPath);
-                                model = ModelLoader.Load(modelData);
+                                model = Unity.Barracuda.ModelLoader.Load(modelData);
                                 Debug.Log($"Успешно загружена модель из Assets/Models: {preferredModelPath}");
                                 modelLoaded = true;
                             }
@@ -475,7 +475,7 @@ public class WallSegmentation : MonoBehaviour
                             NNModel loadedModel = Resources.Load<NNModel>(externalModelPath);
                             if (loadedModel != null)
                             {
-                                model = ModelLoader.Load(loadedModel);
+                                model = Unity.Barracuda.ModelLoader.Load(loadedModel);
                                 currentModelAsset = loadedModel;
                                 Debug.Log($"Успешно загружена модель из Resources: {externalModelPath}");
                                 modelLoaded = true;
@@ -488,7 +488,7 @@ public class WallSegmentation : MonoBehaviour
                                 {
                                     byte[] modelData = System.IO.File.ReadAllBytes(modelPath);
                                     // Используем другой метод загрузки вместо LoadFromBytes
-                                    model = ModelLoader.Load(modelData);
+                                    model = Unity.Barracuda.ModelLoader.Load(modelData);
                                     Debug.Log($"Успешно загружена модель из StreamingAssets: {modelPath}");
                                     modelLoaded = true;
                                 }
@@ -502,7 +502,7 @@ public class WallSegmentation : MonoBehaviour
                             NNModel[] allModels = Resources.LoadAll<NNModel>("");
                             if (allModels != null && allModels.Length > 0)
                             {
-                                model = ModelLoader.Load(allModels[0]);
+                                model = Unity.Barracuda.ModelLoader.Load(allModels[0]);
                                 currentModelAsset = allModels[0];
 
                                 // Находим название модели для отладки
@@ -961,7 +961,7 @@ public class WallSegmentation : MonoBehaviour
                     int channelIndex = wallClassIndex;
                     if (channelIndex >= tensorChannels)
                     {
-                        Debug.LogWarning($"Указанный индекс класса стен ({wallClassIndex}) больше количества каналов в выходном тензоре ({tensorChannels}). Используем индекс 0.");
+                        Debug.LogWarning($"Указанный индекс класса стены ({wallClassIndex}) больше количества каналов в выходном тензоре ({tensorChannels}). Используем индекс 0.");
                         channelIndex = 0;
                     }
 
@@ -991,6 +991,7 @@ public class WallSegmentation : MonoBehaviour
                     // Вывод отладочной информации при включенном логировании
                     if (enableDebugLogs && x % 20 == 0 && y % 20 == 0)
                     {
+                        int channelIndex = wallClassIndex; // Определяем переменную здесь
                         Debug.Log($"Значение тензора для класса {channelIndex} в точке ({x},{y}): {value}");
                     }
                 }
@@ -1018,13 +1019,39 @@ public class WallSegmentation : MonoBehaviour
         ARPlaneManager planeManager = FindObjectOfType<ARPlaneManager>();
         if (planeManager == null)
         {
+            Debug.LogWarning("ARPlaneManager не найден");
             yield break;
         }
 
         // Если нет текстуры сегментации или она неправильно инициализирована
         if (segmentationTexture == null)
         {
+            Debug.LogWarning("Текстура сегментации не доступна");
             yield break;
+        }
+
+        // Проверка и инициализация arCamera
+        if (arCamera == null)
+        {
+            Debug.LogWarning("AR Camera не настроена, пробуем найти камеру");
+            // Сначала пытаемся получить главную камеру
+            arCamera = Camera.main;
+
+            // Если main camera не найдена, ищем любую активную камеру
+            if (arCamera == null)
+            {
+                Camera[] cameras = FindObjectsOfType<Camera>();
+                if (cameras != null && cameras.Length > 0)
+                {
+                    arCamera = cameras[0]; // используем первую найденную камеру
+                    Debug.Log("Используем первую найденную камеру: " + arCamera.name);
+                }
+                else
+                {
+                    Debug.LogError("Не удалось найти ни одной камеры");
+                    yield break;
+                }
+            }
         }
 
         // Получаем все обнаруженные плоскости

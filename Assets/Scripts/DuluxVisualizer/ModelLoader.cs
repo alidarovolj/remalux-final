@@ -62,8 +62,8 @@ namespace DuluxVisualizer
 
                   try
                   {
-                        // Создаем рантайм-модель из ассета
-                        _runtimeModel = ModelLoader.Load(modelAsset);
+                        // Создаем рантайм-модель из ассета, используя класс Unity.Barracuda.ModelLoader
+                        _runtimeModel = Unity.Barracuda.ModelLoader.Load(modelAsset);
 
                         // Создаем воркер для инференса
                         WorkerFactory.Type workerType = WorkerFactory.Type.CSharpBurst;
@@ -111,7 +111,7 @@ namespace DuluxVisualizer
             {
                   if (_runtimeModel == null) return;
 
-                  Debug.Log($"ModelLoader: Загружена модель: {_runtimeModel.name}");
+                  Debug.Log($"ModelLoader: Загружена модель");
                   Debug.Log($"  Входы ({_runtimeModel.inputs.Count}):");
                   foreach (var input in _runtimeModel.inputs)
                   {
@@ -170,12 +170,12 @@ namespace DuluxVisualizer
                   if (_useNCHW)
                   {
                         // Формат NCHW (батч, каналы, высота, ширина)
-                        tensor = new Tensor(resizedTexture, channels: 3, noralize: true);
+                        tensor = new Tensor(resizedTexture, channels: 3);
                   }
                   else
                   {
                         // Формат NHWC (батч, высота, ширина, каналы)
-                        tensor = new Tensor(resizedTexture, doNormalize: true);
+                        tensor = new Tensor(resizedTexture);
                   }
 
                   // Если временная текстура была создана, освобождаем её

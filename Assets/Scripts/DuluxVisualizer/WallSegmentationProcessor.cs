@@ -4,6 +4,7 @@ using Unity.Barracuda;
 using System.Collections.Generic;
 using System.Collections;
 using System;
+using UnityEngine.XR.ARSubsystems;
 
 namespace DuluxVisualizer
 {
@@ -93,10 +94,10 @@ namespace DuluxVisualizer
                   try
                   {
                         // Конвертируем изображение с камеры в текстуру
-                        _cameraTexture.Resize(image.width, image.height);
+                        _cameraTexture.Reinitialize(image.width, image.height);
 
                         // Конвертируем данные из формата камеры в текстуру
-                        var conversionParams = new XRCpuImage.ConversionParams
+                        XRCpuImage.ConversionParams conversionParams = new XRCpuImage.ConversionParams
                         {
                               inputRect = new RectInt(0, 0, image.width, image.height),
                               outputDimensions = new Vector2Int(image.width, image.height),
