@@ -14,11 +14,11 @@ using UnityEditor.SceneManagement;
 /// </summary>
 public class DemoSceneCreator : MonoBehaviour
 {
-      /// <summary>
-      /// Создает новую демо-сцену AR с компонентами для сегментации стен
-      /// </summary>
-      public static void CreateDemoScene()
-      {
+    /// <summary>
+    /// Создает новую демо-сцену AR с компонентами для сегментации стен
+    /// </summary>
+    public static void CreateDemoScene()
+    {
 #if UNITY_EDITOR
         // Создаем новую пустую сцену
         Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
@@ -63,7 +63,21 @@ public class DemoSceneCreator : MonoBehaviour
         // Добавляем компонент SentisWallSegmentation к камере
         SentisWallSegmentation wallSegmentation = cameraObject.AddComponent<SentisWallSegmentation>();
         wallSegmentation.cameraManager = cameraObject.GetComponent<ARCameraManager>();
-        wallSegmentation.arCamera = camera;
+
+        // Используем рефлексию для установки приватного поля arCamera
+        var arCameraField = typeof(SentisWallSegmentation).GetField("arCamera",
+            System.Reflection.BindingFlags.NonPublic |
+            System.Reflection.BindingFlags.Instance);
+
+        if (arCameraField != null)
+        {
+            arCameraField.SetValue(wallSegmentation, camera);
+            Debug.Log("Установлено приватное поле arCamera через рефлексию");
+        }
+        else
+        {
+            Debug.LogWarning("Не удалось найти приватное поле arCamera");
+        }
 
         // Создаем RenderTexture для маски сегментации
         RenderTexture maskRT = new RenderTexture(256, 256, 0, RenderTextureFormat.R8);
@@ -131,12 +145,12 @@ public class DemoSceneCreator : MonoBehaviour
 
         // Сохраняем сцену
         EditorSceneManager.SaveScene(scene, "Assets/Scenes/Demo/SentisWallSegmentationDemo.unity");
-        
+
         Debug.Log("Демо-сцена успешно создана и сохранена по пути: Assets/Scenes/Demo/SentisWallSegmentationDemo.unity");
 #else
             Debug.LogWarning("Создание демо-сцены доступно только в редакторе Unity");
 #endif
-      }
+    }
 
 #if UNITY_EDITOR
     [MenuItem("DuluxVisualizer/Create Sentis Demo Scene")]

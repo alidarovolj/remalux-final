@@ -1,0 +1,20 @@
+{
+  "name": "DuluxVisualizer.Editor",
+  "rootNamespace": "",
+  "references": [
+    "GUID:a9420e37d7990b54abdef6688edbe313",
+    "Unity.Sentis",
+    "DuluxVisualizer"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

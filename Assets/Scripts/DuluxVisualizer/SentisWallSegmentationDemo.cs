@@ -3,6 +3,7 @@ using UnityEngine.XR.ARFoundation;
 using UnityEngine.UI;
 using Unity.XR.CoreUtils;
 using System.Collections;
+using System.Reflection;
 
 /// <summary>
 /// Скрипт для настройки демо-сцены с SentisWallSegmentation
@@ -80,6 +81,35 @@ public class SentisWallSegmentationDemo : MonoBehaviour
             if (wallSegmentation != null)
             {
                   wallSegmentation.cameraManager = cameraManager;
+
+                  // Устанавливаем приватное поле arCamera через рефлексию
+                  Camera arCamera = null;
+
+                  // Пытаемся найти AR камеру в иерархии
+                  if (cameraManager != null)
+                  {
+                        arCamera = cameraManager.GetComponent<Camera>();
+                  }
+
+                  // Если не нашли, ищем mainCamera
+                  if (arCamera == null)
+                  {
+                        arCamera = Camera.main;
+                  }
+
+                  // Устанавливаем приватное поле через рефлексию
+                  if (arCamera != null)
+                  {
+                        var arCameraField = typeof(SentisWallSegmentation).GetField("arCamera",
+                              BindingFlags.NonPublic |
+                              BindingFlags.Instance);
+
+                        if (arCameraField != null)
+                        {
+                              arCameraField.SetValue(wallSegmentation, arCamera);
+                              Debug.Log("Установлено приватное поле arCamera через рефлексию");
+                        }
+                  }
 
                   // Создаем маску сегментации, если не назначена
                   if (segmentationMask == null)
@@ -160,8 +190,8 @@ public class SentisWallSegmentationDemo : MonoBehaviour
                   {
                         // Задаем ссылку на RawImage для отображения отладочной информации
                         var field = typeof(SentisWallSegmentation).GetField("debugImage",
-                            System.Reflection.BindingFlags.NonPublic |
-                            System.Reflection.BindingFlags.Instance);
+                            BindingFlags.NonPublic |
+                            BindingFlags.Instance);
 
                         if (field != null)
                         {
