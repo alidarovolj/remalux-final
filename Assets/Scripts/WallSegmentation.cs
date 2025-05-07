@@ -1012,26 +1012,43 @@ public class WallSegmentation : MonoBehaviour
 
             Debug.Log($"Ожидаемое количество каналов модели: {expectedChannels}");
 
-            // Если ожидаемое количество каналов отличается от входного,
-            // конвертируем данные в нужный формат
-            float[] adaptedInputData = inputData;
-            if (expectedChannels != inputChannels)
+            // Принудительно устанавливаем согласованность каналов для тензора Barracuda
+            if (expectedChannels == 1 && inputChannels != 1)
             {
-                Debug.Log($"Адаптация входных данных: {inputChannels} -> {expectedChannels} каналов");
+                Debug.Log($"Конвертация входных данных RGB -> Grayscale");
+                inputChannels = 1;
 
-                if (expectedChannels == 1 && inputChannels == 3)
-                {
-                    // Конвертируем RGB в оттенки серого
-                    adaptedInputData = ConvertRGBToGrayscale(inputData, inputWidth, inputHeight);
-                }
-                else if (expectedChannels == 3 && inputChannels == 1)
-                {
-                    // Дублируем один канал в три (оттенки серого -> RGB)
-                    adaptedInputData = ConvertGrayscaleToRGB(inputData, inputWidth, inputHeight);
-                }
-                // Обновляем количество каналов для создания тензора
-                inputChannels = expectedChannels;
+                // Конвертируем RGB в оттенки серого
+                inputData = ConvertRGBToGrayscale(inputData, inputWidth, inputHeight);
             }
+            else if (expectedChannels == 3 && inputChannels != 3)
+            {
+                Debug.Log($"Конвертация входных данных Grayscale -> RGB");
+                inputChannels = 3;
+
+                // Дублируем один канал в три (оттенки серого -> RGB)
+                inputData = ConvertGrayscaleToRGB(inputData, inputWidth, inputHeight);
+            }
+            else
+            {
+                // Если случай какой-то другой, принудительно устанавливаем 3 канала для надежности
+                if (inputChannels != 3 && inputChannels != 1)
+                {
+                    Debug.LogWarning($"Нестандартное количество каналов ({inputChannels}), принудительно используем RGB (3 канала)");
+                    inputChannels = 3;
+
+                    // Если данные уже имеют нужную длину, используем их, иначе создаем новые
+                    if (inputData.Length != inputWidth * inputHeight * 3)
+                    {
+                        Debug.LogWarning("Создаем пустые RGB данные");
+                        inputData = new float[inputWidth * inputHeight * 3];
+                    }
+                }
+            }
+
+            // Принудительно проверяем размеры
+            if (inputWidth <= 0) inputWidth = 128;
+            if (inputHeight <= 0) inputHeight = 128;
 
             // Создаем тензор с правильным форматом данных и размерностями
             try
@@ -1049,16 +1066,66 @@ public class WallSegmentation : MonoBehaviour
                 if (useNCHW)
                 {
                     Debug.Log($"Используем формат NCHW: [1, {inputChannels}, {inputHeight}, {inputWidth}]");
-                    inputTensor = new Tensor(1, inputChannels, inputHeight, inputWidth, adaptedInputData);
+                    inputTensor = new Tensor(1, inputChannels, inputHeight, inputWidth, inputData);
                 }
                 else
                 {
                     Debug.Log($"Используем формат NHWC: [1, {inputHeight}, {inputWidth}, {inputChannels}]");
-                    inputTensor = new Tensor(1, inputHeight, inputWidth, inputChannels, adaptedInputData);
+                    inputTensor = new Tensor(1, inputHeight, inputWidth, inputChannels, inputData);
                 }
 
                 // Запускаем инференс модели
-                worker.Execute(inputTensor);
+                try
+                {
+                    worker.Execute(inputTensor);
+                }
+                catch (Exception ex)
+                {
+                    // Обрабатываем ошибку несоответствия каналов
+                    if (ex.Message.Contains("Expected: 3 == 1") || ex.Message.Contains("Values are not equal"))
+                    {
+                        Debug.LogError($"Ошибка несоответствия каналов: {ex.Message}");
+
+                        // Переключаемся на другой формат и пробуем еще раз
+                        if (inputChannels == 1)
+                        {
+                            Debug.Log("Пробуем использовать 3 канала вместо 1...");
+
+                            // Освобождаем ресурсы текущего тензора
+                            inputTensor.Dispose();
+
+                            // Конвертируем в RGB
+                            float[] rgbData = ConvertGrayscaleToRGB(inputData, inputWidth, inputHeight);
+
+                            // Создаем новый тензор с 3 каналами
+                            inputChannels = 3;
+                            inputTensor = new Tensor(1, 3, inputHeight, inputWidth, rgbData);
+
+                            try
+                            {
+                                // Пробуем запустить инференс снова
+                                worker.Execute(inputTensor);
+                                Debug.Log("Успешно выполнен инференс с 3 каналами");
+                            }
+                            catch (Exception innerEx)
+                            {
+                                Debug.LogError($"Не удалось выполнить инференс после изменения количества каналов: {innerEx.Message}");
+                                return DemoSegmentation(sourceTexture);
+                            }
+                        }
+                        else
+                        {
+                            Debug.LogError("Не удалось разрешить конфликт каналов. Переключение на демо-режим.");
+                            return DemoSegmentation(sourceTexture);
+                        }
+                    }
+                    else
+                    {
+                        // Другие ошибки
+                        Debug.LogError($"Ошибка при выполнении инференса: {ex.Message}");
+                        return DemoSegmentation(sourceTexture);
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -1141,6 +1208,19 @@ public class WallSegmentation : MonoBehaviour
     // Преобразует текстуру в одномерный массив нормализованных значений для тензора
     private float[] ConvertTextureToTensor(Texture2D texture, int width, int height, int channels)
     {
+        // Проверяем корректность параметров
+        if (channels <= 0)
+        {
+            Debug.LogWarning($"Некорректное количество каналов: {channels}, используем RGB (3 канала)");
+            channels = 3;
+        }
+
+        if (width <= 0 || height <= 0)
+        {
+            Debug.LogWarning($"Некорректные размеры текстуры: {width}x{height}, используем 128x128");
+            width = height = 128;
+        }
+
         // Проверяем размеры текстуры и при необходимости изменяем
         if (texture.width != width || texture.height != height)
         {
@@ -1153,66 +1233,86 @@ public class WallSegmentation : MonoBehaviour
         // Создаем массив для данных тензора
         float[] tensorData;
 
-        // В зависимости от формата (NCHW или NHWC) организуем данные по-разному
-        if (useNCHW)
+        // Определяем какой формат тензора нам нужен
+        if (channels == 1)
         {
-            // Формат NCHW (batch, channel, height, width) для ONNX моделей
-            tensorData = new float[channels * height * width];
+            // Преобразуем в оттенки серого (1 канал)
+            tensorData = new float[height * width];
 
-            // Заполняем массив данных для каждого канала
-            for (int c = 0; c < channels; c++)
+            // Заполняем данные, конвертируя RGB в градации серого
+            for (int i = 0; i < pixels.Length; i++)
             {
+                // Используем стандартную формулу для перевода в оттенки серого
+                tensorData[i] = 0.299f * pixels[i].r + 0.587f * pixels[i].g + 0.114f * pixels[i].b;
+            }
+
+            Debug.Log($"Создан тензор с 1 каналом (grayscale), размеры: {width}x{height}");
+        }
+        else if (channels == 3)
+        {
+            // Стандартный случай - RGB (3 канала)
+            // В зависимости от формата (NCHW или NHWC) организуем данные по-разному
+            if (useNCHW)
+            {
+                // Формат NCHW (batch, channel, height, width) для ONNX моделей
+                tensorData = new float[channels * height * width];
+
+                // Заполняем массив данных для каждого канала
+                for (int c = 0; c < channels; c++)
+                {
+                    for (int h = 0; h < height; h++)
+                    {
+                        for (int w = 0; w < width; w++)
+                        {
+                            int pixelIndex = h * width + w;
+                            int tensorIndex = c * height * width + h * width + w;
+
+                            // Нормализуем значения в диапазон [0, 1]
+                            switch (c)
+                            {
+                                case 0: // R канал
+                                    tensorData[tensorIndex] = pixels[pixelIndex].r;
+                                    break;
+                                case 1: // G канал
+                                    tensorData[tensorIndex] = pixels[pixelIndex].g;
+                                    break;
+                                case 2: // B канал
+                                    tensorData[tensorIndex] = pixels[pixelIndex].b;
+                                    break;
+                            }
+                        }
+                    }
+                }
+
+                Debug.Log($"Создан тензор с 3 каналами (RGB) в формате NCHW, размеры: {width}x{height}");
+            }
+            else
+            {
+                // Формат NHWC (batch, height, width, channel) для Unity
+                tensorData = new float[height * width * channels];
+
+                // Заполняем массив данных
                 for (int h = 0; h < height; h++)
                 {
                     for (int w = 0; w < width; w++)
                     {
                         int pixelIndex = h * width + w;
-                        int tensorIndex = c * height * width + h * width + w;
 
-                        // Нормализуем значения в диапазон [0, 1]
-                        switch (c)
-                        {
-                            case 0: // R канал
-                                tensorData[tensorIndex] = pixels[pixelIndex].r;
-                                break;
-                            case 1: // G канал
-                                tensorData[tensorIndex] = pixels[pixelIndex].g;
-                                break;
-                            case 2: // B канал
-                                tensorData[tensorIndex] = pixels[pixelIndex].b;
-                                break;
-                            default: // Если больше 3-х каналов, заполняем нулями
-                                tensorData[tensorIndex] = 0;
-                                break;
-                        }
+                        // Нормализуем RGB значения в диапазон [0, 1]
+                        tensorData[pixelIndex * channels + 0] = pixels[pixelIndex].r;
+                        tensorData[pixelIndex * channels + 1] = pixels[pixelIndex].g;
+                        tensorData[pixelIndex * channels + 2] = pixels[pixelIndex].b;
                     }
                 }
+
+                Debug.Log($"Создан тензор с 3 каналами (RGB) в формате NHWC, размеры: {width}x{height}");
             }
         }
         else
         {
-            // Формат NHWC (batch, height, width, channel) для Unity
-            tensorData = new float[height * width * channels];
-
-            // Заполняем массив данных
-            for (int h = 0; h < height; h++)
-            {
-                for (int w = 0; w < width; w++)
-                {
-                    int pixelIndex = h * width + w;
-
-                    // Нормализуем RGB значения в диапазон [0, 1]
-                    tensorData[pixelIndex * channels + 0] = pixels[pixelIndex].r;
-                    tensorData[pixelIndex * channels + 1] = pixels[pixelIndex].g;
-                    tensorData[pixelIndex * channels + 2] = pixels[pixelIndex].b;
-
-                    // Если больше 3-х каналов, заполняем нулями
-                    for (int c = 3; c < channels; c++)
-                    {
-                        tensorData[pixelIndex * channels + c] = 0;
-                    }
-                }
-            }
+            // Нестандартное количество каналов - создаем пустой массив соответствующего размера
+            Debug.LogWarning($"Нестандартное количество каналов: {channels}, создаем пустой тензор нужного размера");
+            tensorData = new float[channels * height * width];
         }
 
         return tensorData;
