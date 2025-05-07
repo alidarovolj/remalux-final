@@ -125,8 +125,16 @@ public class CreateSceneWithFixedSegmentation : Editor
                       BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
                   if (cameraFloorOffsetProperty != null)
                   {
-                        cameraFloorOffsetProperty.SetValue(originComponent, cameraFloorOffsetGO);
-                        Debug.Log("Установлен Camera Floor Offset для XR Origin");
+                        Debug.Log($"Setting Camera Floor Offset (expected type: {cameraFloorOffsetProperty.PropertyType.Name})");
+                        if (cameraFloorOffsetProperty.PropertyType == typeof(Transform))
+                        {
+                              cameraFloorOffsetProperty.SetValue(origin, cameraFloorOffsetGO.transform);
+                        }
+                        else if (cameraFloorOffsetProperty.PropertyType == typeof(GameObject))
+                        {
+                              cameraFloorOffsetProperty.SetValue(origin, cameraFloorOffsetGO);
+                        }
+                        Debug.Log("Camera Floor Offset set for Origin");
                   }
 
                   // Добавляем Tracked Pose Driver (Input System)
@@ -190,10 +198,31 @@ public class CreateSceneWithFixedSegmentation : Editor
                   // Assign camera to origin using reflection
                   if (originType != null && origin != null)
                   {
-                        var cameraProperty = originType.GetProperty("camera",
-                            BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+                        var cameraProperty = originType.GetProperty("Camera");
+                        if (cameraProperty == null)
+                        {
+                              cameraProperty = originType.GetProperty("camera");
+                        }
+
                         if (cameraProperty != null)
-                              cameraProperty.SetValue(origin, mainCamera);
+                        {
+                              // Check expected type of camera property and pass the correct type
+                              Type propertyType = cameraProperty.PropertyType;
+                              Debug.Log($"Setting Camera reference (expected type: {propertyType.Name})");
+                              if (propertyType == typeof(Camera))
+                              {
+                                    cameraProperty.SetValue(origin, mainCamera);
+                              }
+                              else if (propertyType == typeof(GameObject))
+                              {
+                                    cameraProperty.SetValue(origin, mainCamera.gameObject);
+                              }
+                              else if (propertyType == typeof(Transform))
+                              {
+                                    cameraProperty.SetValue(origin, mainCamera.transform);
+                              }
+                              Debug.Log("Camera reference set for Origin");
+                        }
                   }
 
                   // 4. AR Plane Manager
@@ -247,6 +276,7 @@ public class CreateSceneWithFixedSegmentation : Editor
                               var inputChannelsField = typeof(WallSegmentation).GetField("inputChannels",
                                   BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
 
+                              // Убедимся что размерности правильные и согласованные
                               if (inputWidthField != null) inputWidthField.SetValue(wallSegmentation, 128);
                               if (inputHeightField != null) inputHeightField.SetValue(wallSegmentation, 128);
                               if (inputChannelsField != null) inputChannelsField.SetValue(wallSegmentation, 3);

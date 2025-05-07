@@ -38,13 +38,13 @@ public class WallSegmentation : MonoBehaviour
     [SerializeField] public NNModel modelAsset; // Модель ONNX через asset
 
     [Header("Segmentation Parameters")]
-    [SerializeField] private int inputWidth = 128; // Оптимальный размер для model.onnx вместо 32
-    [SerializeField] private int inputHeight = 128; // Оптимальный размер для model.onnx вместо 32
-    [SerializeField] private int inputChannels = 3; // Правильное значение для RGB входного изображения
-    [SerializeField] private string inputName = "pixel_values"; // Правильное имя входа для model.onnx
-    [SerializeField] private string outputName = "logits"; // Правильное имя выхода для model.onnx
-    [SerializeField, Range(0, 1)] private float threshold = 0.3f; // Меньший порог для model.onnx, так как выходные значения отрицательные
-    [SerializeField] private int wallClassIndex = 0; // Класс 0 имеет наивысшую активацию для стен в model.onnx
+    [SerializeField] private int inputWidth = 128; // Размер ширины входного изображения для модели
+    [SerializeField] private int inputHeight = 128; // Размер высоты входного изображения для модели
+    [SerializeField] private int inputChannels = 3; // RGB входное изображение (3 канала)
+    [SerializeField] private string inputName = "pixel_values"; // Имя входа модели
+    [SerializeField] private string outputName = "logits"; // Имя выхода модели
+    [SerializeField, Range(0, 1)] private float threshold = 0.3f; // Порог для бинаризации маски
+    [SerializeField] private int wallClassIndex = 0; // Индекс класса стены в выходном тензоре
 
     [Header("Debug & Performance")]
     [SerializeField] private bool forceDemoMode = false; // Отключаем принудительный демо-режим
@@ -472,49 +472,86 @@ public class WallSegmentation : MonoBehaviour
                         // Если не удалось загрузить напрямую, ищем в Resources
                         if (!modelLoaded)
                         {
-                            NNModel loadedModel = Resources.Load<NNModel>(externalModelPath);
-                            if (loadedModel != null)
+                            try
                             {
-                                model = Unity.Barracuda.ModelLoader.Load(loadedModel);
-                                currentModelAsset = loadedModel;
-                                Debug.Log($"Успешно загружена модель из Resources: {externalModelPath}");
-                                modelLoaded = true;
-                            }
-                            else
-                            {
-                                // Если не нашли в Resources, пробуем StreamingAssets
-                                string modelPath = System.IO.Path.Combine(Application.streamingAssetsPath, externalModelPath);
-                                if (System.IO.File.Exists(modelPath))
+                                // Сначала поищем модель в Resources по пути externalModelPath
+                                NNModel loadedModel = Resources.Load<NNModel>(externalModelPath);
+                                if (loadedModel != null)
                                 {
-                                    byte[] modelData = System.IO.File.ReadAllBytes(modelPath);
-                                    // Используем другой метод загрузки вместо LoadFromBytes
-                                    model = Unity.Barracuda.ModelLoader.Load(modelData);
-                                    Debug.Log($"Успешно загружена модель из StreamingAssets: {modelPath}");
+                                    model = Unity.Barracuda.ModelLoader.Load(loadedModel);
+                                    currentModelAsset = loadedModel;
+                                    Debug.Log($"Успешно загружена модель из Resources: {externalModelPath}");
                                     modelLoaded = true;
                                 }
+                                else
+                                {
+                                    // Если не нашли в Resources, пробуем StreamingAssets
+                                    string modelPath = System.IO.Path.Combine(Application.streamingAssetsPath, externalModelPath);
+                                    if (System.IO.File.Exists(modelPath))
+                                    {
+                                        try
+                                        {
+                                            byte[] modelData = System.IO.File.ReadAllBytes(modelPath);
+
+                                            // Пробуем безопасно загрузить модель
+                                            try
+                                            {
+                                                model = Unity.Barracuda.ModelLoader.Load(modelData);
+                                                Debug.Log($"Успешно загружена модель из StreamingAssets: {modelPath}");
+                                                modelLoaded = true;
+                                            }
+                                            catch (Exception innerEx)
+                                            {
+                                                // Если получили ошибку о неподдерживаемой версии, добавляем подробную информацию
+                                                if (innerEx.Message.Contains("Format version not supported"))
+                                                {
+                                                    Debug.LogWarning($"Неподдерживаемая версия ONNX формата: {innerEx.Message}. " +
+                                                                   "Рекомендуется повторно экспортировать модель с opset_version=9 или использовать " +
+                                                                   "более старую версию ONNX (pip install onnx==1.8.0)");
+                                                }
+                                                throw; // Пробрасываем исключение выше для обработки
+                                            }
+                                        }
+                                        catch (Exception e)
+                                        {
+                                            Debug.LogWarning($"Не удалось загрузить модель напрямую: {e.Message}, пробуем другие пути");
+                                        }
+                                    }
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                Debug.LogWarning($"Ошибка при поиске или загрузке модели из Resources: {ex.Message}");
                             }
                         }
 
                         // Если не удалось найти модель по заданным путям, ищем любые доступные
                         if (!modelLoaded)
                         {
-                            // Ищем среди всех ONNX моделей в Resources
-                            NNModel[] allModels = Resources.LoadAll<NNModel>("");
-                            if (allModels != null && allModels.Length > 0)
+                            try
                             {
-                                model = Unity.Barracuda.ModelLoader.Load(allModels[0]);
-                                currentModelAsset = allModels[0];
-
-                                // Находим название модели для отладки
-                                string modelName = "Unknown";
-                                if (currentModelAsset != null)
+                                // Ищем среди всех ONNX моделей в Resources
+                                NNModel[] allModels = Resources.LoadAll<NNModel>("");
+                                if (allModels != null && allModels.Length > 0)
                                 {
-                                    // Безопасно получаем имя модели
-                                    modelName = currentModelAsset.name;
-                                }
+                                    model = Unity.Barracuda.ModelLoader.Load(allModels[0]);
+                                    currentModelAsset = allModels[0];
 
-                                Debug.Log($"Загружена первая доступная модель: {modelName}");
-                                modelLoaded = true;
+                                    // Находим название модели для отладки
+                                    string modelName = "Unknown";
+                                    if (currentModelAsset != null)
+                                    {
+                                        // Безопасно получаем имя модели
+                                        modelName = currentModelAsset.name;
+                                    }
+
+                                    Debug.Log($"Загружена первая доступная модель: {modelName}");
+                                    modelLoaded = true;
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                Debug.LogWarning($"Ошибка при поиске любых доступных моделей: {ex.Message}");
                             }
                         }
 
@@ -592,22 +629,206 @@ public class WallSegmentation : MonoBehaviour
                 return;
             }
 
-            // Создаем воркер для выполнения модели
-            WorkerFactory.Type workerType = WorkerFactory.ValidateType(WorkerFactory.Type.CSharpBurst);
-            worker = WorkerFactory.CreateWorker(workerType, model);
+            // Создаем рабочий экземпляр модели
+            worker = WorkerFactory.CreateWorker(WorkerFactory.Type.CSharpBurst, model);
 
-            // Устанавливаем флаг инициализации
+            // Анализируем параметры модели для отладки
+            AnalyzeModelInputs(model);
+
             isModelInitialized = true;
             useDemoMode = false;
-            errorCount = 0;
 
-            Debug.Log($"Модель сегментации успешно загружена и инициализирована. Тип воркера: {workerType}");
+            Debug.Log($"Модель сегментации успешно загружена и инициализирована. Тип воркера: CSharpBurst");
         }
         catch (Exception e)
         {
-            Debug.LogError($"Критическая ошибка при загрузке модели: {e.Message}. Переключение в демо-режим.");
+            Debug.LogError($"Ошибка загрузки модели: {e.Message}");
             SwitchToDemoMode();
         }
+    }
+
+    /// <summary>
+    /// Анализирует входные параметры модели для определения правильных размерностей
+    /// </summary>
+    private void AnalyzeModelInputs(Model model)
+    {
+        if (model == null || model.inputs == null || model.inputs.Count == 0)
+        {
+            Debug.LogWarning("Модель не содержит информации о входных данных");
+            return;
+        }
+
+        Debug.Log("Анализ модели");
+        Debug.Log($"Количество входов: {model.inputs.Count}");
+
+        foreach (var input in model.inputs)
+        {
+            Debug.Log($"Вход: {input.name}");
+            Debug.Log($"Форма: {string.Join(",", input.shape)}");
+
+            // Детальный анализ формы тензора
+            if (input.shape.Length >= 4)
+            {
+                Debug.Log("Детальный анализ формы тензора:");
+
+                // Вывод всех значений формы для диагностики
+                for (int i = 0; i < input.shape.Length; i++)
+                {
+                    Debug.Log($"  Размерность[{i}] = {input.shape[i]}");
+                }
+
+                // Проверка на размеры, равные нулю, и их исправление
+                bool hasZeroDimensions = false;
+                for (int i = 0; i < input.shape.Length; i++)
+                {
+                    if (input.shape[i] == 0)
+                    {
+                        hasZeroDimensions = true;
+                        Debug.LogWarning($"Обнаружена нулевая размерность в индексе {i}. Будут использованы безопасные значения по умолчанию.");
+                    }
+                }
+
+                if (hasZeroDimensions)
+                {
+                    Debug.Log("Применение безопасных размеров для тензора с нулевыми размерностями");
+
+                    // Определяем формат по количеству ненулевых измерений и их позиции
+                    int nonZeroCount = 0;
+                    for (int i = 0; i < input.shape.Length; i++)
+                    {
+                        if (input.shape[i] > 0) nonZeroCount++;
+                    }
+
+                    // Если большинство размерностей нулевые, используем безопасные значения
+                    if (nonZeroCount < input.shape.Length / 2)
+                    {
+                        Debug.Log("Большинство размерностей нулевые, используем безопасные значения");
+                        useNCHW = true;
+                        inputChannels = 3;  // Предполагаем RGB
+                        inputHeight = 128;  // Стандартная высота
+                        inputWidth = 128;   // Стандартная ширина
+                        Debug.Log($"Установлены безопасные значения: формат=NCHW, размеры={inputWidth}x{inputHeight}x{inputChannels}");
+                        return;
+                    }
+                }
+
+                // Определение формата на основе анализа формы
+                bool looksLikeNCHW = false;
+                bool looksLikeNHWC = false;
+
+                // NCHW: [batch, channels, height, width]
+                // Обычно количество каналов меньше размеров (1-4 для RGB/RGBA)
+                if (input.shape[1] > 0 && input.shape[1] <= 4)
+                {
+                    looksLikeNCHW = true;
+                    Debug.Log("Форма похожа на NCHW: [batch, channels, height, width]");
+                }
+
+                // NHWC: [batch, height, width, channels]
+                // Обычно последнее измерение - каналы (1-4 для RGB/RGBA)
+                if (input.shape.Length >= 4 && input.shape[input.shape.Length - 1] > 0 && input.shape[input.shape.Length - 1] <= 4)
+                {
+                    looksLikeNHWC = true;
+                    Debug.Log("Форма похожа на NHWC: [batch, height, width, channels]");
+                }
+
+                // Если модель не соответствует стандартным признакам, пробуем определить по другой логике
+                if (!looksLikeNCHW && !looksLikeNHWC)
+                {
+                    Debug.Log("Форма не соответствует стандартным признакам, анализируем детальнее");
+
+                    // Предполагаем, что наибольшие значения - это размеры (высота/ширина)
+                    int maxValue = 0;
+                    int maxIndex = -1;
+
+                    for (int i = 1; i < input.shape.Length; i++)
+                    {
+                        if (input.shape[i] > maxValue)
+                        {
+                            maxValue = (int)input.shape[i];
+                            maxIndex = i;
+                        }
+                    }
+
+                    if (maxIndex == 1)
+                    {
+                        // Если наибольшее значение во втором измерении, больше шансов что это NHWC
+                        useNCHW = false;
+                        Debug.Log("Предполагаем формат NHWC на основе анализа максимальных значений");
+                    }
+                    else if (maxIndex >= 2)
+                    {
+                        // Если наибольшее значение в третьем или четвертом измерении, больше шансов что это NCHW
+                        useNCHW = true;
+                        Debug.Log("Предполагаем формат NCHW на основе анализа максимальных значений");
+                    }
+                }
+                else
+                {
+                    // Используем результат стандартного анализа
+                    if (looksLikeNCHW && !looksLikeNHWC)
+                    {
+                        useNCHW = true;
+                    }
+                    else if (!looksLikeNCHW && looksLikeNHWC)
+                    {
+                        useNCHW = false;
+                    }
+                    else
+                    {
+                        // Если подходит оба формата, используем безопасный вариант
+                        Debug.Log("Подходят оба формата, используем безопасный вариант (NCHW)");
+                        useNCHW = true;
+                    }
+                }
+
+                // Обновляем параметры на основе определенного формата
+                if (useNCHW)
+                {
+                    // В NCHW формате: [batch, channels, height, width]
+                    if (input.shape[1] > 0 && input.shape[1] <= 128)
+                    {
+                        inputChannels = (int)input.shape[1];
+                        Debug.Log($"Установлено количество каналов (NCHW): {inputChannels}");
+                    }
+
+                    if (input.shape.Length >= 3 && input.shape[2] > 0)
+                    {
+                        inputHeight = (int)input.shape[2];
+                        Debug.Log($"Установлена высота (NCHW): {inputHeight}");
+                    }
+
+                    if (input.shape.Length >= 4 && input.shape[3] > 0)
+                    {
+                        inputWidth = (int)input.shape[3];
+                        Debug.Log($"Установлена ширина (NCHW): {inputWidth}");
+                    }
+                }
+                else
+                {
+                    // В NHWC формате: [batch, height, width, channels]
+                    if (input.shape.Length >= 4 && input.shape[3] > 0 && input.shape[3] <= 128)
+                    {
+                        inputChannels = (int)input.shape[3];
+                        Debug.Log($"Установлено количество каналов (NHWC): {inputChannels}");
+                    }
+
+                    if (input.shape[1] > 0)
+                    {
+                        inputHeight = (int)input.shape[1];
+                        Debug.Log($"Установлена высота (NHWC): {inputHeight}");
+                    }
+
+                    if (input.shape.Length >= 3 && input.shape[2] > 0)
+                    {
+                        inputWidth = (int)input.shape[2];
+                        Debug.Log($"Установлена ширина (NHWC): {inputWidth}");
+                    }
+                }
+            }
+        }
+
+        Debug.Log($"Итоговые параметры модели: формат={(useNCHW ? "NCHW" : "NHWC")}, размеры={inputWidth}x{inputHeight}x{inputChannels}");
     }
 
     // Создание демо-стен
@@ -759,18 +980,73 @@ public class WallSegmentation : MonoBehaviour
                 inputTensor.Dispose();
             }
 
-            // Создаем тензор с правильным форматом данных
-            try
+            // Проверка входных данных модели и коррекция количества каналов
+            var modelInput = model.inputs[0];
+            Debug.Log($"Форма входа модели: [{string.Join(",", modelInput.shape)}]");
+
+            // Получаем ожидаемое количество каналов из модели
+            int expectedChannels = 3; // По умолчанию RGB
+
+            // Проверяем разные форматы и адаптируемся
+            if (modelInput.shape.Length >= 4)
             {
                 if (useNCHW)
                 {
-                    // Для ONNX моделей: NCHW (batch, channels, height, width)
-                    inputTensor = new Tensor(1, inputChannels, inputHeight, inputWidth, inputData);
+                    // NCHW: [batch, channels, height, width]
+                    expectedChannels = (int)modelInput.shape[1];
                 }
                 else
                 {
-                    // Для Unity: NHWC (batch, height, width, channels)
-                    inputTensor = new Tensor(1, inputHeight, inputWidth, inputChannels, inputData);
+                    // NHWC: [batch, height, width, channels]
+                    expectedChannels = (int)modelInput.shape[3];
+                }
+            }
+
+            Debug.Log($"Ожидаемое количество каналов модели: {expectedChannels}");
+
+            // Если ожидаемое количество каналов отличается от входного,
+            // конвертируем данные в нужный формат
+            float[] adaptedInputData = inputData;
+            if (expectedChannels != inputChannels)
+            {
+                Debug.Log($"Адаптация входных данных: {inputChannels} -> {expectedChannels} каналов");
+
+                if (expectedChannels == 1 && inputChannels == 3)
+                {
+                    // Конвертируем RGB в оттенки серого
+                    adaptedInputData = ConvertRGBToGrayscale(inputData, inputWidth, inputHeight);
+                }
+                else if (expectedChannels == 3 && inputChannels == 1)
+                {
+                    // Дублируем один канал в три (оттенки серого -> RGB)
+                    adaptedInputData = ConvertGrayscaleToRGB(inputData, inputWidth, inputHeight);
+                }
+                // Обновляем количество каналов для создания тензора
+                inputChannels = expectedChannels;
+            }
+
+            // Создаем тензор с правильным форматом данных и размерностями
+            try
+            {
+                Debug.Log($"Создание тензора с размерностями: inputWidth={inputWidth}, inputHeight={inputHeight}, inputChannels={inputChannels}");
+
+                // Проверка на корректность размерностей перед созданием тензора
+                if (inputWidth <= 0 || inputHeight <= 0 || inputChannels <= 0)
+                {
+                    Debug.LogError($"Некорректные размерности тензора: {inputWidth}x{inputHeight}x{inputChannels}");
+                    return DemoSegmentation(sourceTexture);
+                }
+
+                // Проверяем форму входных данных модели
+                if (useNCHW)
+                {
+                    Debug.Log($"Используем формат NCHW: [1, {inputChannels}, {inputHeight}, {inputWidth}]");
+                    inputTensor = new Tensor(1, inputChannels, inputHeight, inputWidth, adaptedInputData);
+                }
+                else
+                {
+                    Debug.Log($"Используем формат NHWC: [1, {inputHeight}, {inputWidth}, {inputChannels}]");
+                    inputTensor = new Tensor(1, inputHeight, inputWidth, inputChannels, adaptedInputData);
                 }
 
                 // Запускаем инференс модели
@@ -1503,5 +1779,41 @@ public class WallSegmentation : MonoBehaviour
             float recommendedThreshold = (minValues[wallClassIndex] + maxValues[wallClassIndex]) / 2;
             Debug.Log($"Рекомендуемый порог для класса стены: {recommendedThreshold:.###}");
         }
+    }
+
+    // Конвертирует RGB данные в оттенки серого
+    private float[] ConvertRGBToGrayscale(float[] rgbData, int width, int height)
+    {
+        float[] grayscaleData = new float[width * height];
+        int pixelCount = width * height;
+
+        for (int i = 0; i < pixelCount; i++)
+        {
+            // RGB -> Grayscale конвертация по формуле Y = 0.299*R + 0.587*G + 0.114*B
+            float r = rgbData[i * 3];
+            float g = rgbData[i * 3 + 1];
+            float b = rgbData[i * 3 + 2];
+            grayscaleData[i] = 0.299f * r + 0.587f * g + 0.114f * b;
+        }
+
+        return grayscaleData;
+    }
+
+    // Конвертирует данные в оттенках серого в RGB
+    private float[] ConvertGrayscaleToRGB(float[] grayscaleData, int width, int height)
+    {
+        float[] rgbData = new float[width * height * 3];
+        int pixelCount = width * height;
+
+        for (int i = 0; i < pixelCount; i++)
+        {
+            float grayValue = grayscaleData[i];
+            // Копируем одно и то же значение во все три канала
+            rgbData[i * 3] = grayValue;     // R
+            rgbData[i * 3 + 1] = grayValue; // G
+            rgbData[i * 3 + 2] = grayValue; // B
+        }
+
+        return rgbData;
     }
 }

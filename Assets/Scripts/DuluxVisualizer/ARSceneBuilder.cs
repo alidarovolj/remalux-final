@@ -75,393 +75,479 @@ public static class ARSceneBuilder
       }
 
       /// <summary>
-      /// Creates a full AR scene with AR Foundation components
+      /// Creates a full AR scene with AR Foundation components using reflection
+      /// to avoid compile-time dependencies
       /// </summary>
       private static void CreateARScene()
       {
             Debug.Log("Creating AR scene with AR Foundation components...");
 
-            // Use reflection to create AR components
             try
             {
-                  // Get AR Foundation types
-                  Type arSessionType = GetTypeFromName("UnityEngine.XR.ARFoundation.ARSession");
-                  Type arSessionOriginType = GetTypeFromName("UnityEngine.XR.ARFoundation.ARSessionOrigin");
-                  Type arPoseDriverType = GetTypeFromName("UnityEngine.XR.ARFoundation.ARPoseDriver");
-                  Type arCameraManagerType = GetTypeFromName("UnityEngine.XR.ARFoundation.ARCameraManager");
-                  Type arCameraBackgroundType = GetTypeFromName("UnityEngine.XR.ARFoundation.ARCameraBackground");
-                  Type arPlaneManagerType = GetTypeFromName("UnityEngine.XR.ARFoundation.ARPlaneManager");
-                  Type planeDetectionModeType = GetTypeFromName("UnityEngine.XR.ARSubsystems.PlaneDetectionMode");
+                  // 1. AR Session
+                  GameObject sessionGO = new GameObject("AR Session");
+                  var sessionType = GetTypeFromName("UnityEngine.XR.ARFoundation.ARSession");
+                  if (sessionType != null)
+                        sessionGO.AddComponent(sessionType);
+                  else
+                        Debug.LogWarning("ARSession type not found");
 
-                  if (arSessionType == null || arSessionOriginType == null)
+                  // 2. AR Session Origin/XR Origin
+                  GameObject originGO = new GameObject("AR Session Origin");
+
+                  // Try to find the XROrigin type first (newer AR Foundation)
+                  var xrOriginType = GetTypeFromName("Unity.XR.CoreUtils.XROrigin");
+                  var originType = xrOriginType;
+                  bool usingXROrigin = xrOriginType != null;
+
+                  // Fallback to ARSessionOrigin if XROrigin not found
+                  if (!usingXROrigin)
                   {
-                        Debug.LogError("Critical AR Foundation types not found. Falling back to demo scene.");
-                        CreateDemoScene();
-                        return;
+                        originType = GetTypeFromName("UnityEngine.XR.ARFoundation.ARSessionOrigin");
                   }
 
-                  // 1. AR Session
-                  var sessionGO = new GameObject("AR Session");
-                  sessionGO.AddComponent(arSessionType);
-
-                  // 2. AR Session Origin
-                  var originGO = new GameObject("AR Session Origin");
-                  var origin = originGO.AddComponent(arSessionOriginType);
-
-                  // Создаем Camera Floor Offset для XR Origin
-                  GameObject cameraFloorOffsetGO = new GameObject("Camera Floor Offset");
-                  cameraFloorOffsetGO.transform.SetParent(originGO.transform);
-
-                  // Get trackablesParent property using reflection
-                  var trackablesParentProperty = arSessionOriginType.GetProperty("trackablesParent",
-                      BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-
-                  // Only try to set trackablesParent if it's not a read-only property
-                  if (trackablesParentProperty != null && trackablesParentProperty.CanWrite)
+                  Component origin = null;
+                  if (originType != null)
                   {
-                        trackablesParentProperty.SetValue(origin, null);
+                        origin = originGO.AddComponent(originType);
                   }
                   else
                   {
-                        Debug.Log("trackablesParent is read-only or not found, skipping assignment");
+                        Debug.LogWarning("Neither XROrigin nor ARSessionOrigin type found");
                   }
 
-                  // Получаем поле Camera Floor Offset в XR Origin и устанавливаем его
-                  var cameraFloorOffsetProperty = arSessionOriginType.GetProperty("CameraFloorOffsetObject",
-                      BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-                  if (cameraFloorOffsetProperty != null)
-                  {
-                        cameraFloorOffsetProperty.SetValue(origin, cameraFloorOffsetGO);
-                        Debug.Log("Установлен Camera Floor Offset для XR Origin");
-                  }
+                  // 3. Camera Floor Offset for XR Origin
+                  GameObject cameraFloorOffsetGO = new GameObject("Camera Floor Offset");
+                  cameraFloorOffsetGO.transform.SetParent(originGO.transform);
 
-                  // 3. AR Camera under Origin
-                  var camGO = new GameObject("AR Camera");
-                  camGO.transform.SetParent(cameraFloorOffsetGO.transform); // Теперь камера под Floor Offset
-                  var cam = camGO.AddComponent<Camera>();
-                  cam.clearFlags = CameraClearFlags.SolidColor;
-                  cam.backgroundColor = Color.black;
-                  cam.tag = "MainCamera";
+                  // 4. AR Camera
+                  GameObject cameraGO = new GameObject("AR Camera");
+                  cameraGO.transform.SetParent(cameraFloorOffsetGO.transform);
 
-                  // Pose tracking via ARPoseDriver 
-                  if (arPoseDriverType != null)
+                  Camera mainCamera = cameraGO.AddComponent<Camera>();
+                  mainCamera.clearFlags = CameraClearFlags.SolidColor;
+                  mainCamera.backgroundColor = Color.black;
+                  mainCamera.tag = "MainCamera";
+
+                  // Configure XR Origin
+                  if (origin != null)
                   {
-                        try
+                        // Set camera floor offset object
+                        PropertyInfo cameraFloorOffsetProperty = null;
+
+                        if (usingXROrigin)
                         {
-                              camGO.AddComponent(arPoseDriverType);
+                              cameraFloorOffsetProperty = originType.GetProperty("CameraFloorOffsetObject");
                         }
-                        catch (Exception ex)
+                        else
                         {
-                              Debug.LogWarning($"Couldn't add ARPoseDriver: {ex.Message}. You may need to update AR Foundation package.");
+                              cameraFloorOffsetProperty = originType.GetProperty("cameraFloorOffsetObject");
                         }
-                  }
 
-                  // Добавляем Tracked Pose Driver (Input System) если есть InputSystem
-                  var trackedPoseDriverType = GetTypeFromName("UnityEngine.InputSystem.XR.TrackedPoseDriver, Unity.InputSystem");
-                  if (trackedPoseDriverType != null)
-                  {
-                        try
+                        if (cameraFloorOffsetProperty != null)
                         {
-                              camGO.AddComponent(trackedPoseDriverType);
-                              Debug.Log("Добавлен Tracked Pose Driver (Input System) к камере");
-                        }
-                        catch (Exception ex)
-                        {
-                              Debug.LogWarning($"Не удалось добавить Tracked Pose Driver: {ex.Message}");
-                        }
-                  }
-
-                  // AR Camera components
-                  Component arCameraManager = null;
-                  if (arCameraManagerType != null)
-                  {
-                        arCameraManager = camGO.AddComponent(arCameraManagerType);
-                  }
-
-                  if (arCameraBackgroundType != null)
-                  {
-                        camGO.AddComponent(arCameraBackgroundType);
-                  }
-
-                  // Assign camera to origin
-                  var cameraProperty = arSessionOriginType.GetProperty("camera",
-                      BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-                  if (cameraProperty != null)
-                  {
-                        cameraProperty.SetValue(origin, cam);
-                  }
-
-                  // 4. Add AR Planes for plane detection
-                  if (arPlaneManagerType != null && planeDetectionModeType != null)
-                  {
-                        try
-                        {
-                              var planeManager = originGO.AddComponent(arPlaneManagerType);
-
-                              // Set vertical detection mode
-                              var requestedDetectionModeProperty = arPlaneManagerType.GetProperty("requestedDetectionMode",
-                                  BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-                              if (requestedDetectionModeProperty != null)
+                              // Pass the Transform, not the GameObject
+                              Debug.Log($"Setting Camera Floor Offset (expected type: {cameraFloorOffsetProperty.PropertyType.Name})");
+                              if (cameraFloorOffsetProperty.PropertyType == typeof(Transform))
                               {
-                                    // Vertical mode is typically value 2
-                                    var verticalMode = Enum.ToObject(planeDetectionModeType, 2);
-                                    requestedDetectionModeProperty.SetValue(planeManager, verticalMode);
+                                    cameraFloorOffsetProperty.SetValue(origin, cameraFloorOffsetGO.transform);
+                              }
+                              else if (cameraFloorOffsetProperty.PropertyType == typeof(GameObject))
+                              {
+                                    cameraFloorOffsetProperty.SetValue(origin, cameraFloorOffsetGO);
+                              }
+                              Debug.Log("Camera Floor Offset set for Origin");
+                        }
+
+                        // Set camera reference
+                        var cameraProperty = originType.GetProperty("Camera");
+                        if (cameraProperty == null)
+                        {
+                              cameraProperty = originType.GetProperty("camera");
+                        }
+
+                        if (cameraProperty != null)
+                        {
+                              // Check expected type of camera property and pass the correct type
+                              Type propertyType = cameraProperty.PropertyType;
+                              Debug.Log($"Setting Camera reference (expected type: {propertyType.Name})");
+                              if (propertyType == typeof(Camera))
+                              {
+                                    cameraProperty.SetValue(origin, mainCamera);
+                              }
+                              else if (propertyType == typeof(GameObject))
+                              {
+                                    cameraProperty.SetValue(origin, cameraGO);
+                              }
+                              else if (propertyType == typeof(Transform))
+                              {
+                                    cameraProperty.SetValue(origin, cameraGO.transform);
+                              }
+                              Debug.Log("Camera reference set for Origin");
+                        }
+                  }
+
+                  // 5. Add TrackedPoseDriver for camera motion tracking
+                  // Try Input System Tracked Pose Driver first (newer)
+                  var inputSysTPDType = GetTypeFromName("UnityEngine.InputSystem.XR.TrackedPoseDriver");
+                  bool tpdAdded = false;
+
+                  if (inputSysTPDType != null)
+                  {
+                        try
+                        {
+                              cameraGO.AddComponent(inputSysTPDType);
+                              tpdAdded = true;
+                              Debug.Log("Added Input System TrackedPoseDriver");
+                        }
+                        catch (Exception ex)
+                        {
+                              Debug.LogWarning($"Failed to add Input System TrackedPoseDriver: {ex.Message}");
+                        }
+                  }
+
+                  // Fallback to AR Foundation TrackedPoseDriver if needed
+                  if (!tpdAdded)
+                  {
+                        var arTPDType = GetTypeFromName("UnityEngine.XR.ARFoundation.ARTrackedPoseDriver");
+                        if (arTPDType != null)
+                        {
+                              try
+                              {
+                                    cameraGO.AddComponent(arTPDType);
+                                    Debug.Log("Added ARTrackedPoseDriver");
+                              }
+                              catch (Exception ex)
+                              {
+                                    Debug.LogWarning($"Failed to add ARTrackedPoseDriver: {ex.Message}");
                               }
                         }
-                        catch (Exception ex)
+                        else
                         {
-                              Debug.LogWarning($"Couldn't add ARPlaneManager: {ex.Message}");
+                              Debug.LogWarning("Could not find any TrackedPoseDriver type");
                         }
                   }
 
-                  // 5. Wall Segmentation component
-                  var seg = camGO.AddComponent<WallSegmentation>();
-                  if (seg != null && arCameraManager != null)
+                  // 6. Add ARCameraManager and ARCameraBackground
+                  var cameraManagerType = GetTypeFromName("UnityEngine.XR.ARFoundation.ARCameraManager");
+                  Component arCameraManager = null;
+                  if (cameraManagerType != null)
                   {
-                        // Use reflection to set cameraManager field to avoid direct type casting
+                        arCameraManager = cameraGO.AddComponent(cameraManagerType);
+                        Debug.Log("Added ARCameraManager to camera");
+                  }
+
+                  var cameraBackgroundType = GetTypeFromName("UnityEngine.XR.ARFoundation.ARCameraBackground");
+                  if (cameraBackgroundType != null)
+                  {
+                        cameraGO.AddComponent(cameraBackgroundType);
+                        Debug.Log("Added ARCameraBackground to camera");
+                  }
+
+                  // 7. Add ARPlaneManager and ARRaycastManager
+                  var planeManagerType = GetTypeFromName("UnityEngine.XR.ARFoundation.ARPlaneManager");
+                  if (planeManagerType != null)
+                  {
+                        var planeManager = originGO.AddComponent(planeManagerType);
+                        Debug.Log("Added ARPlaneManager to Origin");
+
+                        // Set to detect vertical planes (walls)
+                        var planeDetectionModeType = GetTypeFromName("UnityEngine.XR.ARSubsystems.PlaneDetectionMode");
+                        if (planeDetectionModeType != null)
+                        {
+                              // Vertical mode is typically value 2
+                              var requestedDetectionModeProperty = planeManagerType.GetProperty("requestedDetectionMode");
+                              if (requestedDetectionModeProperty != null)
+                              {
+                                    var verticalMode = Enum.ToObject(planeDetectionModeType, 2);
+                                    requestedDetectionModeProperty.SetValue(planeManager, verticalMode);
+                                    Debug.Log("Set ARPlaneManager to detect vertical planes");
+                              }
+                        }
+                  }
+
+                  var raycastManagerType = GetTypeFromName("UnityEngine.XR.ARFoundation.ARRaycastManager");
+                  if (raycastManagerType != null)
+                  {
+                        originGO.AddComponent(raycastManagerType);
+                        Debug.Log("Added ARRaycastManager to Origin");
+                  }
+
+                  // 8. Add WallSegmentation and WallPaintBlit components
+                  var wallSegmentation = cameraGO.AddComponent<WallSegmentation>();
+                  if (wallSegmentation != null && arCameraManager != null)
+                  {
+                        // Set references
                         var cameraManagerField = typeof(WallSegmentation).GetField("cameraManager",
                             BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
                         if (cameraManagerField != null)
-                        {
-                              cameraManagerField.SetValue(seg, arCameraManager);
-                        }
+                              cameraManagerField.SetValue(wallSegmentation, arCameraManager);
 
-                        // Set arCamera reference
                         var arCameraField = typeof(WallSegmentation).GetField("arCamera",
                             BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
                         if (arCameraField != null)
-                        {
-                              arCameraField.SetValue(seg, cam);
-                        }
+                              arCameraField.SetValue(wallSegmentation, mainCamera);
 
-                        // Set correct input dimensions to avoid assertion errors
-                        // Fix for "Assertion failure. Values are not equal. Expected: 3 == 128"
-                        try
-                        {
-                              var inputWidthField = typeof(WallSegmentation).GetField("inputWidth",
-                                  BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
-                              var inputHeightField = typeof(WallSegmentation).GetField("inputHeight",
-                                  BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
-                              var inputChannelsField = typeof(WallSegmentation).GetField("inputChannels",
-                                  BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
+                        // Configure model parameters to avoid dimension errors
+                        var inputWidthField = typeof(WallSegmentation).GetField("inputWidth",
+                            BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
+                        var inputHeightField = typeof(WallSegmentation).GetField("inputHeight",
+                            BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
+                        var inputChannelsField = typeof(WallSegmentation).GetField("inputChannels",
+                            BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
 
-                              if (inputWidthField != null) inputWidthField.SetValue(seg, 128);
-                              if (inputHeightField != null) inputHeightField.SetValue(seg, 128);
-                              if (inputChannelsField != null) inputChannelsField.SetValue(seg, 3);
+                        if (inputWidthField != null) inputWidthField.SetValue(wallSegmentation, 128);
+                        if (inputHeightField != null) inputHeightField.SetValue(wallSegmentation, 128);
+                        if (inputChannelsField != null) inputChannelsField.SetValue(wallSegmentation, 3);
 
-                              Debug.Log("WallSegmentation parameters configured for model compatibility");
-                        }
-                        catch (Exception ex)
-                        {
-                              Debug.LogWarning($"Failed to configure WallSegmentation parameters: {ex.Message}");
-                        }
+                        Debug.Log("Added and configured WallSegmentation");
                   }
 
-                  // 6. Paint Blit component
-                  var blit = camGO.AddComponent<WallPaintBlit>();
-                  if (blit != null && seg != null)
+                  var wallPaintBlit = cameraGO.AddComponent<WallPaintBlit>();
+                  if (wallPaintBlit != null && wallSegmentation != null)
                   {
-                        blit.maskTexture = seg.outputRenderTexture;
-                        blit.paintColor = Color.red;
-                        blit.opacity = 0.7f;
+                        wallPaintBlit.maskTexture = wallSegmentation.outputRenderTexture;
+                        wallPaintBlit.paintColor = Color.red;
+                        wallPaintBlit.opacity = 0.7f;
+                        Debug.Log("Added and configured WallPaintBlit");
                   }
             }
             catch (Exception ex)
             {
                   Debug.LogError($"Error creating AR scene: {ex.Message}\n{ex.StackTrace}");
-                  CreateDemoScene();
+                  CreateDemoScene(); // Fallback to basic scene
             }
       }
 
       /// <summary>
-      /// Creates a simple demo scene without AR Foundation for testing
+      /// Creates a basic demo scene without AR Foundation
       /// </summary>
       private static void CreateDemoScene()
       {
-            Debug.Log("Creating demo scene without AR Foundation...");
+            Debug.Log("Creating basic scene without AR Foundation");
 
-            // 1. Main Camera
-            var camGO = new GameObject("Main Camera");
-            var cam = camGO.AddComponent<Camera>();
-            cam.clearFlags = CameraClearFlags.SolidColor;
-            cam.backgroundColor = Color.black;
-            cam.tag = "MainCamera";
+            // Main Camera
+            GameObject cameraObj = new GameObject("Main Camera");
+            Camera camera = cameraObj.AddComponent<Camera>();
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.backgroundColor = Color.black;
+            camera.tag = "MainCamera";
 
-            // 2. Add demo wall segmentation
-            try
-            {
-                  var demoSeg = camGO.AddComponent<DemoWallSegmentation>();
-            }
-            catch (System.Exception ex)
-            {
-                  Debug.LogWarning($"Couldn't add DemoWallSegmentation: {ex.Message}");
-            }
-
-            // 3. Create demo walls
-            CreateDemoWalls();
-      }
-
-      /// <summary>
-      /// Creates demo walls for testing without AR
-      /// </summary>
-      private static void CreateDemoWalls()
-      {
-            var wallsParent = new GameObject("Demo Walls");
+            // Demo walls parent
+            GameObject demoWallsParent = new GameObject("Demo Walls");
 
             // Create demo walls
             for (int i = 0; i < 3; i++)
             {
-                  var wall = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                  wall.name = $"Demo Wall {i + 1}";
-                  wall.transform.parent = wallsParent.transform;
+                  GameObject wall = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                  wall.transform.SetParent(demoWallsParent.transform);
                   wall.transform.position = new Vector3(i * 2 - 2, 0, 5);
                   wall.transform.localScale = new Vector3(1.5f, 3, 0.1f);
+                  wall.name = "Demo Wall " + (i + 1);
 
-                  // Add a material with a light color
+                  // Use shared material to avoid leaks in edit mode
                   var renderer = wall.GetComponent<Renderer>();
                   if (renderer != null && renderer.sharedMaterial != null)
                   {
                         renderer.sharedMaterial.color = new Color(0.9f, 0.9f, 0.85f);
                   }
             }
+
+            // Add DemoWallSegmentation if available
+            try
+            {
+                  var demoSegType = GetTypeFromName("DemoWallSegmentation");
+                  if (demoSegType != null)
+                        cameraObj.AddComponent(demoSegType);
+                  else if (typeof(DemoWallSegmentation) != null)
+                        cameraObj.AddComponent<DemoWallSegmentation>();
+            }
+            catch
+            {
+                  Debug.LogWarning("DemoWallSegmentation component not available");
+            }
+
+            // Try to add WallSegmentation in demo mode
+            try
+            {
+                  var wallSeg = cameraObj.AddComponent<WallSegmentation>();
+                  if (wallSeg != null)
+                  {
+                        // Set to demo mode
+                        var modeField = typeof(WallSegmentation).GetField("currentMode",
+                            BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
+                        if (modeField != null)
+                        {
+                              // Get the enum value for "Demo" mode (typically 0)
+                              var modeType = modeField.FieldType;
+                              var demoMode = Enum.GetValues(modeType).GetValue(0);
+                              modeField.SetValue(wallSeg, demoMode);
+                        }
+
+                        Debug.Log("Added WallSegmentation in demo mode");
+                  }
+            }
+            catch (Exception ex)
+            {
+                  Debug.LogWarning($"Could not add WallSegmentation: {ex.Message}");
+            }
       }
 
       /// <summary>
-      /// Creates the UI canvas and elements
+      /// Creates UI canvas with debug visualization
       /// </summary>
       private static void CreateUI()
       {
-            // We only run this code when UI package is available
-            // This check is now done in the main CreateScene method
-            // and this method is only called if UI package is present
             try
             {
-                  // Using dynamic type to avoid compile-time dependencies
-                  // Create canvas GameObject
-                  var canvasGO = new GameObject("UI Canvas");
+                  // Create canvas
+                  GameObject canvasObj = new GameObject("UI Canvas");
+                  var canvasType = GetTypeFromName("UnityEngine.Canvas");
+                  var canvas = canvasObj.AddComponent(canvasType);
 
-                  // Try to set UI layer if it exists
-                  try
-                  {
-                        canvasGO.layer = LayerMask.NameToLayer("UI");
-                  }
-                  catch
-                  {
-                        // Fallback to default layer if UI layer doesn't exist
-                  }
+                  // Set render mode to screen space
+                  var renderModeProperty = canvasType.GetProperty("renderMode");
+                  if (renderModeProperty != null)
+                        renderModeProperty.SetValue(canvas, 1); // ScreenSpaceOverlay
 
-                  var canvasType = System.Type.GetType("UnityEngine.Canvas, UnityEngine");
-                  var canvas = canvasGO.AddComponent(canvasType);
-
-                  var renderModeProperty = canvasType.GetProperty("renderMode",
-                      BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-                  renderModeProperty?.SetValue(canvas, 1); // ScreenSpaceOverlay
-
-                  System.Type canvasScalerType = System.Type.GetType("UnityEngine.UI.CanvasScaler, UnityEngine.UI");
+                  // Add canvas scaler
+                  var canvasScalerType = GetTypeFromName("UnityEngine.UI.CanvasScaler");
                   if (canvasScalerType != null)
                   {
-                        var scaler = canvasGO.AddComponent(canvasScalerType);
-                        var uiScaleModeProperty = canvasScalerType.GetProperty("uiScaleMode",
-                            BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-                        uiScaleModeProperty?.SetValue(scaler, 1); // ScaleWithScreenSize
+                        var scaler = canvasObj.AddComponent(canvasScalerType);
+                        var uiScaleModeProperty = canvasScalerType.GetProperty("uiScaleMode");
+                        if (uiScaleModeProperty != null)
+                              uiScaleModeProperty.SetValue(scaler, 1); // ScaleWithScreenSize
                   }
 
-                  System.Type graphicRaycasterType = System.Type.GetType("UnityEngine.UI.GraphicRaycaster, UnityEngine.UI");
+                  // Add graphic raycaster
+                  var graphicRaycasterType = GetTypeFromName("UnityEngine.UI.GraphicRaycaster");
                   if (graphicRaycasterType != null)
-                  {
-                        canvasGO.AddComponent(graphicRaycasterType);
-                  }
+                        canvasObj.AddComponent(graphicRaycasterType);
 
-                  // Create a simple panel for color buttons
-                  var panelGO = new GameObject("Color Panel");
-                  panelGO.transform.SetParent(canvasGO.transform);
+                  // Create debug visualization panel
+                  GameObject debugPanel = new GameObject("Segmentation Debug View");
+                  debugPanel.transform.SetParent(canvasObj.transform, false);
 
                   // Add RectTransform
-                  var rectTransformType = System.Type.GetType("UnityEngine.RectTransform, UnityEngine");
-                  var rect = panelGO.AddComponent(rectTransformType);
+                  var rectTransformType = GetTypeFromName("UnityEngine.RectTransform");
+                  var rectTransform = debugPanel.AddComponent(rectTransformType);
 
-                  // Set properties
-                  var anchorMinProperty = rectTransformType.GetProperty("anchorMin",
-                      BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-                  anchorMinProperty?.SetValue(rect, new Vector2(0, 0));
+                  // Configure position (top right corner)
+                  var anchorMinProperty = rectTransformType.GetProperty("anchorMin");
+                  if (anchorMinProperty != null)
+                        anchorMinProperty.SetValue(rectTransform, new Vector2(0.7f, 0.7f));
 
-                  var anchorMaxProperty = rectTransformType.GetProperty("anchorMax",
-                      BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-                  anchorMaxProperty?.SetValue(rect, new Vector2(1, 0.2f));
+                  var anchorMaxProperty = rectTransformType.GetProperty("anchorMax");
+                  if (anchorMaxProperty != null)
+                        anchorMaxProperty.SetValue(rectTransform, new Vector2(0.98f, 0.98f));
 
-                  // Создаем RawImage для отладочной визуализации сегментации
-                  GameObject debugImageGO = new GameObject("Debug Segmentation View");
-                  debugImageGO.transform.SetParent(canvasGO.transform, false);
+                  var offsetMinProperty = rectTransformType.GetProperty("offsetMin");
+                  if (offsetMinProperty != null)
+                        offsetMinProperty.SetValue(rectTransform, Vector2.zero);
 
-                  // Добавляем RectTransform
-                  var debugRect = debugImageGO.AddComponent(rectTransformType);
+                  var offsetMaxProperty = rectTransformType.GetProperty("offsetMax");
+                  if (offsetMaxProperty != null)
+                        offsetMaxProperty.SetValue(rectTransform, Vector2.zero);
 
-                  // Настраиваем позицию (правый верхний угол экрана)
-                  var debugRectAnchorMinProperty = rectTransformType.GetProperty("anchorMin",
-                      BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-                  debugRectAnchorMinProperty?.SetValue(debugRect, new Vector2(0.65f, 0.7f));
-
-                  var debugRectAnchorMaxProperty = rectTransformType.GetProperty("anchorMax",
-                      BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-                  debugRectAnchorMaxProperty?.SetValue(debugRect, new Vector2(0.95f, 0.95f));
-
-                  // Добавляем RawImage
-                  System.Type rawImageType = System.Type.GetType("UnityEngine.UI.RawImage, UnityEngine.UI");
+                  // Add RawImage
+                  var rawImageType = GetTypeFromName("UnityEngine.UI.RawImage");
                   if (rawImageType != null)
                   {
-                        var rawImage = debugImageGO.AddComponent(rawImageType);
-                        Debug.Log("Добавлен RawImage для отладочной визуализации сегментации");
+                        debugPanel.AddComponent(rawImageType);
+                        Debug.Log("Added RawImage for segmentation visualization");
+
+                        // Try to connect to WallSegmentation if available
+                        var wallSeg = GameObject.FindFirstObjectByType<WallSegmentation>();
+                        if (wallSeg != null)
+                        {
+                              // Find debugImage field in WallSegmentation
+                              var debugImageField = typeof(WallSegmentation).GetField("debugImage",
+                                  BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
+                              if (debugImageField != null)
+                              {
+                                    debugImageField.SetValue(wallSeg, debugPanel.GetComponent(rawImageType));
+                                    Debug.Log("Connected RawImage to WallSegmentation.debugImage");
+                              }
+                        }
                   }
 
-                  Debug.Log("UI elements created successfully.");
+                  // Create a color picker panel
+                  GameObject colorPanel = new GameObject("Color Panel");
+                  colorPanel.transform.SetParent(canvasObj.transform, false);
+
+                  // Add RectTransform
+                  var panelRect = colorPanel.AddComponent(rectTransformType);
+
+                  // Configure position (bottom of screen)
+                  if (anchorMinProperty != null)
+                        anchorMinProperty.SetValue(panelRect, new Vector2(0, 0));
+
+                  if (anchorMaxProperty != null)
+                        anchorMaxProperty.SetValue(panelRect, new Vector2(1, 0.2f));
+
+                  if (offsetMinProperty != null)
+                        offsetMinProperty.SetValue(panelRect, Vector2.zero);
+
+                  if (offsetMaxProperty != null)
+                        offsetMaxProperty.SetValue(panelRect, Vector2.zero);
+
+                  Debug.Log("UI canvas setup complete");
+            }
+            catch (Exception ex)
+            {
+                  Debug.LogError($"Error creating UI: {ex.Message}\n{ex.StackTrace}");
+            }
+      }
+
+      /// <summary>
+      /// Gets a Type by name with proper error handling
+      /// </summary>
+      private static System.Type GetTypeFromName(string typeName)
+      {
+            try
+            {
+                  // Try direct type lookup
+                  var type = System.Type.GetType(typeName);
+                  if (type != null) return type;
+
+                  // Try looking in all loaded assemblies
+                  foreach (var assembly in System.AppDomain.CurrentDomain.GetAssemblies())
+                  {
+                        type = assembly.GetType(typeName);
+                        if (type != null) return type;
+
+                        // Try without assembly qualifier
+                        if (typeName.Contains(","))
+                        {
+                              string shortName = typeName.Substring(0, typeName.IndexOf(','));
+                              type = assembly.GetType(shortName);
+                              if (type != null) return type;
+                        }
+
+                        // Try without namespace
+                        if (typeName.Contains("."))
+                        {
+                              string className = typeName.Substring(typeName.LastIndexOf('.') + 1);
+                              foreach (var t in assembly.GetTypes())
+                              {
+                                    if (t.Name == className)
+                                          return t;
+                              }
+                        }
+                  }
+
+                  return null;
             }
             catch (System.Exception ex)
             {
-                  Debug.LogError($"Error creating UI elements: {ex.Message}\n{ex.StackTrace}");
+                  Debug.LogError($"Error getting type '{typeName}': {ex.Message}");
+                  return null;
             }
       }
 
       /// <summary>
-      /// Gets a Type by name across all loaded assemblies
-      /// </summary>
-      private static Type GetTypeFromName(string typeName)
-      {
-            // Try direct lookup
-            Type type = Type.GetType(typeName);
-            if (type != null) return type;
-
-            // Try more comprehensive search
-            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                  // Try full name
-                  type = assembly.GetType(typeName);
-                  if (type != null) return type;
-
-                  // Try without assembly specification
-                  if (typeName.Contains(","))
-                  {
-                        string shortName = typeName.Substring(0, typeName.IndexOf(",")).Trim();
-                        type = assembly.GetType(shortName);
-                        if (type != null) return type;
-                  }
-
-                  // Try just the class name (last part of namespace)
-                  if (typeName.Contains("."))
-                  {
-                        string className = typeName.Substring(typeName.LastIndexOf(".") + 1);
-                        foreach (var t in assembly.GetTypes())
-                        {
-                              if (t.Name == className)
-                                    return t;
-                        }
-                  }
-            }
-
-            return null;
-      }
-
-      /// <summary>
-      /// Checks if a type is available (used to test for package availability)
+      /// Checks if a type is available in the current app domain
       /// </summary>
       private static bool IsTypeAvailable(string typeName)
       {
