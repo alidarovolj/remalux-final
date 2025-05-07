@@ -980,7 +980,8 @@ public class WallSegmentation : MonoBehaviour
             TextureScale.Bilinear(sourceTexture, inputWidth, inputHeight);
 
             // Преобразование текстуры в входной тензор модели
-            float[] inputData = ConvertTextureToTensor(sourceTexture, inputWidth, inputHeight, inputChannels);
+            // ПРИНУДИТЕЛЬНО ИСПОЛЬЗУЕМ 3 КАНАЛА НЕЗАВИСИМО ОТ МОДЕЛИ
+            float[] inputData = ConvertTextureToTensor(sourceTexture, inputWidth, inputHeight, 3);
 
             // Создаем входной тензор
             if (inputTensor != null)
@@ -992,59 +993,11 @@ public class WallSegmentation : MonoBehaviour
             var modelInput = model.inputs[0];
             Debug.Log($"Форма входа модели: [{string.Join(",", modelInput.shape)}]");
 
-            // Получаем ожидаемое количество каналов из модели
-            int expectedChannels = 3; // По умолчанию RGB
+            // ПРИНУДИТЕЛЬНО УСТАНАВЛИВАЕМ 3 КАНАЛА НЕЗАВИСИМО ОТ МОДЕЛИ
+            int expectedChannels = 3; // Всегда RGB для Barracuda
+            inputChannels = 3;
 
-            // Проверяем разные форматы и адаптируемся
-            if (modelInput.shape.Length >= 4)
-            {
-                if (useNCHW)
-                {
-                    // NCHW: [batch, channels, height, width]
-                    expectedChannels = (int)modelInput.shape[1];
-                }
-                else
-                {
-                    // NHWC: [batch, height, width, channels]
-                    expectedChannels = (int)modelInput.shape[3];
-                }
-            }
-
-            Debug.Log($"Ожидаемое количество каналов модели: {expectedChannels}");
-
-            // Принудительно устанавливаем согласованность каналов для тензора Barracuda
-            if (expectedChannels == 1 && inputChannels != 1)
-            {
-                Debug.Log($"Конвертация входных данных RGB -> Grayscale");
-                inputChannels = 1;
-
-                // Конвертируем RGB в оттенки серого
-                inputData = ConvertRGBToGrayscale(inputData, inputWidth, inputHeight);
-            }
-            else if (expectedChannels == 3 && inputChannels != 3)
-            {
-                Debug.Log($"Конвертация входных данных Grayscale -> RGB");
-                inputChannels = 3;
-
-                // Дублируем один канал в три (оттенки серого -> RGB)
-                inputData = ConvertGrayscaleToRGB(inputData, inputWidth, inputHeight);
-            }
-            else
-            {
-                // Если случай какой-то другой, принудительно устанавливаем 3 канала для надежности
-                if (inputChannels != 3 && inputChannels != 1)
-                {
-                    Debug.LogWarning($"Нестандартное количество каналов ({inputChannels}), принудительно используем RGB (3 канала)");
-                    inputChannels = 3;
-
-                    // Если данные уже имеют нужную длину, используем их, иначе создаем новые
-                    if (inputData.Length != inputWidth * inputHeight * 3)
-                    {
-                        Debug.LogWarning("Создаем пустые RGB данные");
-                        inputData = new float[inputWidth * inputHeight * 3];
-                    }
-                }
-            }
+            Debug.Log($"Ожидаемое количество каналов модели: {expectedChannels} (принудительно RGB)");
 
             // Принудительно проверяем размеры
             if (inputWidth <= 0) inputWidth = 128;
@@ -1062,75 +1015,70 @@ public class WallSegmentation : MonoBehaviour
                     return DemoSegmentation(sourceTexture);
                 }
 
-                // Проверяем форму входных данных модели
-                if (useNCHW)
-                {
-                    Debug.Log($"Используем формат NCHW: [1, {inputChannels}, {inputHeight}, {inputWidth}]");
-                    inputTensor = new Tensor(1, inputChannels, inputHeight, inputWidth, inputData);
-                }
-                else
-                {
-                    Debug.Log($"Используем формат NHWC: [1, {inputHeight}, {inputWidth}, {inputChannels}]");
-                    inputTensor = new Tensor(1, inputHeight, inputWidth, inputChannels, inputData);
-                }
-
-                // Запускаем инференс модели
-                try
-                {
-                    worker.Execute(inputTensor);
-                }
-                catch (Exception ex)
-                {
-                    // Обрабатываем ошибку несоответствия каналов
-                    if (ex.Message.Contains("Expected: 3 == 1") || ex.Message.Contains("Values are not equal"))
-                    {
-                        Debug.LogError($"Ошибка несоответствия каналов: {ex.Message}");
-
-                        // Переключаемся на другой формат и пробуем еще раз
-                        if (inputChannels == 1)
-                        {
-                            Debug.Log("Пробуем использовать 3 канала вместо 1...");
-
-                            // Освобождаем ресурсы текущего тензора
-                            inputTensor.Dispose();
-
-                            // Конвертируем в RGB
-                            float[] rgbData = ConvertGrayscaleToRGB(inputData, inputWidth, inputHeight);
-
-                            // Создаем новый тензор с 3 каналами
-                            inputChannels = 3;
-                            inputTensor = new Tensor(1, 3, inputHeight, inputWidth, rgbData);
-
-                            try
-                            {
-                                // Пробуем запустить инференс снова
-                                worker.Execute(inputTensor);
-                                Debug.Log("Успешно выполнен инференс с 3 каналами");
-                            }
-                            catch (Exception innerEx)
-                            {
-                                Debug.LogError($"Не удалось выполнить инференс после изменения количества каналов: {innerEx.Message}");
-                                return DemoSegmentation(sourceTexture);
-                            }
-                        }
-                        else
-                        {
-                            Debug.LogError("Не удалось разрешить конфликт каналов. Переключение на демо-режим.");
-                            return DemoSegmentation(sourceTexture);
-                        }
-                    }
-                    else
-                    {
-                        // Другие ошибки
-                        Debug.LogError($"Ошибка при выполнении инференса: {ex.Message}");
-                        return DemoSegmentation(sourceTexture);
-                    }
-                }
+                // ВСЕГДА ИСПОЛЬЗУЕМ NCHW С 3 КАНАЛАМИ
+                useNCHW = true;
+                Debug.Log($"Используем формат NCHW: [1, 3, {inputHeight}, {inputWidth}]");
+                inputTensor = new Tensor(1, 3, inputHeight, inputWidth, inputData);
             }
             catch (Exception ex)
             {
                 Debug.LogError($"Ошибка при создании или выполнении тензора: {ex.Message}");
                 return DemoSegmentation(sourceTexture);
+            }
+
+            // Запускаем инференс модели
+            try
+            {
+                Debug.Log("Запуск инференса с 3 каналами, NCHW формат...");
+                worker.Execute(inputTensor);
+                Debug.Log("Инференс успешно выполнен");
+            }
+            catch (Exception ex)
+            {
+                // Обрабатываем ошибку несоответствия каналов
+                if (ex.Message.Contains("Expected: 3 == 1") || ex.Message.Contains("Values are not equal"))
+                {
+                    Debug.LogError($"Ошибка несоответствия каналов: {ex.Message}");
+
+                    // Переключаемся на другой формат и пробуем еще раз
+                    if (inputChannels == 1)
+                    {
+                        Debug.Log("Пробуем использовать 3 канала вместо 1...");
+
+                        // Освобождаем ресурсы текущего тензора
+                        inputTensor.Dispose();
+
+                        // Конвертируем в RGB
+                        float[] rgbData = ConvertGrayscaleToRGB(inputData, inputWidth, inputHeight);
+
+                        // Создаем новый тензор с 3 каналами
+                        inputChannels = 3;
+                        inputTensor = new Tensor(1, 3, inputHeight, inputWidth, rgbData);
+
+                        try
+                        {
+                            // Пробуем запустить инференс снова
+                            worker.Execute(inputTensor);
+                            Debug.Log("Успешно выполнен инференс с 3 каналами");
+                        }
+                        catch (Exception innerEx)
+                        {
+                            Debug.LogError($"Не удалось выполнить инференс после изменения количества каналов: {innerEx.Message}");
+                            return DemoSegmentation(sourceTexture);
+                        }
+                    }
+                    else
+                    {
+                        Debug.LogError("Не удалось разрешить конфликт каналов. Переключение на демо-режим.");
+                        return DemoSegmentation(sourceTexture);
+                    }
+                }
+                else
+                {
+                    // Другие ошибки
+                    Debug.LogError($"Ошибка при выполнении инференса: {ex.Message}");
+                    return DemoSegmentation(sourceTexture);
+                }
             }
 
             // Получаем результат из выходного тензора
@@ -1212,6 +1160,14 @@ public class WallSegmentation : MonoBehaviour
         if (channels <= 0)
         {
             Debug.LogWarning($"Некорректное количество каналов: {channels}, используем RGB (3 канала)");
+            channels = 3;
+        }
+
+        // Принудительно используем 3 канала из-за внутреннего ограничения Barracuda
+        // Независимо от того, что говорит модель, используем RGB
+        if (channels != 3)
+        {
+            Debug.LogWarning($"Принудительно используем RGB (3 канала) вместо {channels} для совместимости с Barracuda");
             channels = 3;
         }
 
