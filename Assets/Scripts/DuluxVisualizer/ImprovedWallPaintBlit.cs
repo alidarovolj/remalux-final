@@ -1,228 +1,214 @@
 using UnityEngine;
 
-namespace DuluxVisualizer
+/// <summary>
+/// Applies improved paint effect to walls using segmentation mask
+/// with better texture preservation and lighting interaction
+/// </summary>
+public class ImprovedWallPaintBlit : MonoBehaviour
 {
-      /// <summary>
-      /// Улучшенный компонент для применения эффекта окрашивания стен через пост-обработку
-      /// </summary>
-      [RequireComponent(typeof(Camera))]
-      public class ImprovedWallPaintBlit : MonoBehaviour
+      // Shader properties
+      private Shader wallPaintShader;
+      private Material wallPaintMaterial;
+
+      // Segmentation mask texture
+      [SerializeField] private Texture _maskTexture;
+
+      // Paint color and opacity
+      [SerializeField] private Color _paintColor = Color.red;
+      [SerializeField, Range(0, 1)] private float _paintOpacity = 0.7f;
+
+      // Additional visual options
+      [SerializeField, Range(0, 1)] private float _preserveShadows = 0.8f;
+      [SerializeField, Range(0, 1)] private float _smoothEdges = 0.1f;
+      [SerializeField] private bool _debugView = false;
+
+      // Advanced options
+      [Header("Advanced Options")]
+      [SerializeField] private bool _useColorCorrection = true;
+      [SerializeField] private bool _adaptToLighting = true;
+      [SerializeField, Range(0.5f, 2.0f)] private float _gammaCorrection = 1.0f;
+      [SerializeField, Range(0.0f, 1.0f)] private float _detailPreservation = 0.5f;
+
+      // Run-time texture storage
+      private RenderTexture _tempTexture;
+
+      // Property accessors
+      public Texture maskTexture
       {
-            [Header("Текстуры")]
-            [SerializeField] private RenderTexture _maskTexture;
-            [Tooltip("Используется для временного хранения кадра между обновлениями маски")]
-            [SerializeField] private RenderTexture _intermediateTexture;
+            get { return _maskTexture; }
+            set { _maskTexture = value; }
+      }
 
-            [Header("Параметры окрашивания")]
-            [SerializeField] private Color _paintColor = Color.red;
-            [SerializeField, Range(0f, 1f)] private float _opacity = 0.7f;
-            [SerializeField, Range(0f, 1f)] private float _preserveShadows = 0.8f;
-            [SerializeField, Range(0f, 1f)] private float _smoothEdges = 0.1f;
-            [SerializeField] private bool _debugView = false;
-            [SerializeField] private bool _useSmoothing = true;
-            [SerializeField] private float _smoothingFactor = 0.85f;
+      public Color paintColor
+      {
+            get { return _paintColor; }
+            set { _paintColor = value; }
+      }
 
-            // Ссылки на ресурсы
-            private Shader _wallPaintShader;
-            private Material _wallPaintMaterial;
-            private Camera _camera;
+      public float opacity
+      {
+            get { return _paintOpacity; }
+            set { _paintOpacity = value; }
+      }
 
-            // Свойства для доступа из других скриптов
-            public Color paintColor
+      public float preserveShadows
+      {
+            get { return _preserveShadows; }
+            set { _preserveShadows = value; }
+      }
+
+      public float smoothEdges
+      {
+            get { return _smoothEdges; }
+            set { _smoothEdges = value; }
+      }
+
+      public bool debugView
+      {
+            get { return _debugView; }
+            set { _debugView = value; }
+      }
+
+      private void Start()
+      {
+            // Load improved shader
+            wallPaintShader = Shader.Find("Hidden/ImprovedWallPaint");
+
+            // Fallback to standard shader if improved not found
+            if (wallPaintShader == null)
             {
-                  get { return _paintColor; }
-                  set { _paintColor = value; }
+                  Debug.LogWarning("ImprovedWallPaint shader not found! Falling back to standard WallPaint shader.");
+                  wallPaintShader = Shader.Find("Hidden/WallPaint");
             }
 
-            public float opacity
+            if (wallPaintShader == null)
             {
-                  get { return _opacity; }
-                  set { _opacity = Mathf.Clamp01(value); }
+                  Debug.LogError("No wall paint shader found! Make sure either ImprovedWallPaint.shader or WallPaint.shader exists in the Shaders folder and is properly compiled.");
+                  enabled = false;
+                  return;
             }
 
-            public float preserveShadows
+            // Create material from shader
+            wallPaintMaterial = new Material(wallPaintShader);
+      }
+
+      private void OnRenderImage(RenderTexture source, RenderTexture destination)
+      {
+            // Make sure shader and mask texture are available
+            if (wallPaintMaterial == null || _maskTexture == null)
             {
-                  get { return _preserveShadows; }
-                  set { _preserveShadows = Mathf.Clamp01(value); }
+                  Graphics.Blit(source, destination);
+                  return;
             }
 
-            public float smoothEdges
+            // Create temp texture if needed for multi-pass effects
+            if (_useColorCorrection && _tempTexture == null)
             {
-                  get { return _smoothEdges; }
-                  set { _smoothEdges = Mathf.Clamp01(value); }
+                  _tempTexture = new RenderTexture(source.width, source.height, 0, source.format);
             }
 
-            public bool debugView
+            // Set up shader parameters
+            wallPaintMaterial.SetTexture("_MainTex", source);
+            wallPaintMaterial.SetTexture("_MaskTex", _maskTexture);
+            wallPaintMaterial.SetColor("_PaintColor", _paintColor);
+            wallPaintMaterial.SetFloat("_PaintOpacity", _paintOpacity);
+            wallPaintMaterial.SetFloat("_PreserveShadows", _preserveShadows);
+            wallPaintMaterial.SetFloat("_SmoothEdges", _smoothEdges);
+            wallPaintMaterial.SetFloat("_DebugView", _debugView ? 1.0f : 0.0f);
+
+            // Set advanced parameters if shader supports them
+            if (_useColorCorrection)
             {
-                  get { return _debugView; }
-                  set { _debugView = value; }
+                  if (wallPaintMaterial.HasProperty("_GammaCorrection"))
+                        wallPaintMaterial.SetFloat("_GammaCorrection", _gammaCorrection);
+
+                  if (wallPaintMaterial.HasProperty("_DetailPreservation"))
+                        wallPaintMaterial.SetFloat("_DetailPreservation", _detailPreservation);
+
+                  if (wallPaintMaterial.HasProperty("_AdaptToLighting"))
+                        wallPaintMaterial.SetFloat("_AdaptToLighting", _adaptToLighting ? 1.0f : 0.0f);
             }
 
-            public RenderTexture maskTexture
+            // Apply the effect
+            if (_useColorCorrection && wallPaintMaterial.HasProperty("_GammaCorrection"))
             {
-                  get { return _maskTexture; }
-                  set { _maskTexture = value; }
+                  // Two-pass rendering for color correction
+                  Graphics.Blit(source, _tempTexture, wallPaintMaterial);
+                  ApplyColorCorrection(_tempTexture, destination);
             }
-
-            private void Awake()
+            else
             {
-                  _camera = GetComponent<Camera>();
-
-                  // Загружаем шейдер
-                  _wallPaintShader = Shader.Find("Hidden/ImprovedWallPaint");
-
-                  if (_wallPaintShader == null)
-                  {
-                        Debug.LogError("ImprovedWallPaint шейдер не найден! Убедитесь, что он находится в папке Shaders и правильно импортирован.");
-                        enabled = false;
-                        return;
-                  }
-
-                  // Создаем материал
-                  _wallPaintMaterial = new Material(_wallPaintShader);
-
-                  // Инициализируем промежуточную текстуру, если она не задана
-                  if (_useSmoothing && _intermediateTexture == null)
-                  {
-                        // Создаем промежуточную текстуру с размером экрана
-                        _intermediateTexture = new RenderTexture(Screen.width, Screen.height, 0, RenderTextureFormat.ARGB32);
-                        _intermediateTexture.name = "WallPaintIntermediate";
-                        _intermediateTexture.filterMode = FilterMode.Bilinear;
-                        _intermediateTexture.Create();
-                  }
+                  // Single-pass rendering
+                  Graphics.Blit(source, destination, wallPaintMaterial);
             }
+      }
 
-            private void OnRenderImage(RenderTexture source, RenderTexture destination)
+      // Apply color correction as a post-process
+      private void ApplyColorCorrection(RenderTexture source, RenderTexture destination)
+      {
+            // If we have a color correction shader, use it
+            Shader colorCorrectionShader = Shader.Find("Hidden/ColorCorrection");
+            if (colorCorrectionShader != null)
             {
-                  // Проверяем наличие всех необходимых ресурсов
-                  if (_wallPaintMaterial == null || _maskTexture == null)
-                  {
-                        Graphics.Blit(source, destination);
-                        return;
-                  }
+                  Material colorCorrectionMaterial = new Material(colorCorrectionShader);
+                  colorCorrectionMaterial.SetTexture("_MainTex", source);
+                  colorCorrectionMaterial.SetFloat("_Gamma", _gammaCorrection);
 
-                  // Настраиваем параметры шейдера
-                  _wallPaintMaterial.SetTexture("_MainTex", source);
-                  _wallPaintMaterial.SetTexture("_MaskTex", _maskTexture);
-                  _wallPaintMaterial.SetColor("_PaintColor", _paintColor);
-                  _wallPaintMaterial.SetFloat("_PaintOpacity", _opacity);
-                  _wallPaintMaterial.SetFloat("_PreserveShadows", _preserveShadows);
-                  _wallPaintMaterial.SetFloat("_SmoothEdges", _smoothEdges);
-                  _wallPaintMaterial.SetFloat("_DebugView", _debugView ? 1.0f : 0.0f);
+                  Graphics.Blit(source, destination, colorCorrectionMaterial);
 
-                  // Применяем эффект
-                  if (_useSmoothing && _intermediateTexture != null)
-                  {
-                        // Если используем сглаживание между кадрами
-                        if (_intermediateTexture.IsCreated())
-                        {
-                              // 1. Рендерим текущий кадр
-                              Graphics.Blit(source, _intermediateTexture, _wallPaintMaterial);
+                  // Cleanup
+                  Destroy(colorCorrectionMaterial);
+            }
+            else
+            {
+                  // Fallback to direct blit
+                  Graphics.Blit(source, destination);
+            }
+      }
 
-                              // 2. Смешиваем с предыдущим кадром для временной стабильности
-                              ApplyTemporalSmoothing(source, _intermediateTexture, destination);
-                        }
-                        else
-                        {
-                              // Если промежуточная текстура не создана, применяем эффект напрямую
-                              Graphics.Blit(source, destination, _wallPaintMaterial);
-                        }
-                  }
+      private void OnDestroy()
+      {
+            // Clean up material
+            if (wallPaintMaterial != null)
+            {
+                  if (Application.isPlaying)
+                        Destroy(wallPaintMaterial);
                   else
-                  {
-                        // Без сглаживания просто применяем эффект
-                        Graphics.Blit(source, destination, _wallPaintMaterial);
-                  }
+                        DestroyImmediate(wallPaintMaterial);
             }
 
-            /// <summary>
-            /// Применяет временное сглаживание между кадрами для уменьшения мерцания
-            /// </summary>
-            private void ApplyTemporalSmoothing(RenderTexture source, RenderTexture current, RenderTexture destination)
+            // Clean up render texture
+            if (_tempTexture != null)
             {
-                  // Создаем параметры для смешивания
-                  Material blendMat = new Material(Shader.Find("Hidden/Unlit/Transparent"));
-                  blendMat.SetTexture("_MainTex", current);
-                  blendMat.SetFloat("_Alpha", 1.0f - _smoothingFactor);
-
-                  // Смешиваем текущий кадр с предыдущим
-                  Graphics.Blit(current, destination, blendMat);
-
-                  // Очищаем временный материал
-                  Destroy(blendMat);
+                  if (Application.isPlaying)
+                        Destroy(_tempTexture);
+                  else
+                        DestroyImmediate(_tempTexture);
             }
+      }
 
-            /// <summary>
-            /// Обновляет параметры окрашивания
-            /// </summary>
-            public void UpdatePaintParameters(Color color, float opacity, float preserveShadows, float smoothEdges)
+      // Адаптирует цвет к текущим условиям освещения
+      public void AdaptToSceneLighting()
+      {
+            if (_adaptToLighting && Camera.main != null)
             {
-                  _paintColor = color;
-                  _opacity = Mathf.Clamp01(opacity);
-                  _preserveShadows = Mathf.Clamp01(preserveShadows);
-                  _smoothEdges = Mathf.Clamp01(smoothEdges);
-            }
+                  // Получаем информацию об освещении сцены
+                  var renderSettings = RenderSettings.ambientLight;
+                  var mainLight = RenderSettings.sun;
 
-            /// <summary>
-            /// Устанавливает режим отладки
-            /// </summary>
-            public void SetDebugMode(bool enabled)
-            {
-                  _debugView = enabled;
-            }
-
-            /// <summary>
-            /// Устанавливает использование временного сглаживания
-            /// </summary>
-            public void SetSmoothingEnabled(bool enabled, float factor = 0.85f)
-            {
-                  _useSmoothing = enabled;
-                  _smoothingFactor = Mathf.Clamp01(factor);
-
-                  // Создаем или удаляем промежуточную текстуру при необходимости
-                  if (_useSmoothing && _intermediateTexture == null)
+                  // Адаптируем значения сохранения теней в зависимости от яркости освещения
+                  if (mainLight != null)
                   {
-                        _intermediateTexture = new RenderTexture(Screen.width, Screen.height, 0, RenderTextureFormat.ARGB32);
-                        _intermediateTexture.name = "WallPaintIntermediate";
-                        _intermediateTexture.filterMode = FilterMode.Bilinear;
-                        _intermediateTexture.Create();
-                  }
-                  else if (!_useSmoothing && _intermediateTexture != null)
-                  {
-                        _intermediateTexture.Release();
-                        Destroy(_intermediateTexture);
-                        _intermediateTexture = null;
-                  }
-            }
-
-            private void OnDestroy()
-            {
-                  // Освобождаем ресурсы
-                  if (_wallPaintMaterial != null)
-                  {
-                        if (Application.isPlaying)
-                              Destroy(_wallPaintMaterial);
-                        else
-                              DestroyImmediate(_wallPaintMaterial);
+                        float lightIntensity = mainLight.intensity;
+                        // Увеличиваем сохранение теней при ярком освещении
+                        _preserveShadows = Mathf.Clamp(_preserveShadows + (lightIntensity - 1.0f) * 0.1f, 0.0f, 1.0f);
                   }
 
-                  if (_intermediateTexture != null)
-                  {
-                        _intermediateTexture.Release();
-                        if (Application.isPlaying)
-                              Destroy(_intermediateTexture);
-                        else
-                              DestroyImmediate(_intermediateTexture);
-                  }
-            }
+                  // Адаптируем гамма-коррекцию в зависимости от общей яркости сцены
+                  float ambientIntensity = (renderSettings.r + renderSettings.g + renderSettings.b) / 3.0f;
+                  _gammaCorrection = Mathf.Lerp(0.8f, 1.2f, ambientIntensity);
 
-            private void OnDisable()
-            {
-                  // Освобождаем ресурсы промежуточной текстуры при отключении
-                  if (_intermediateTexture != null)
-                  {
-                        _intermediateTexture.Release();
-                  }
+                  Debug.Log($"Adapted to lighting conditions: PreserveShadows={_preserveShadows}, Gamma={_gammaCorrection}");
             }
       }
 }
