@@ -612,9 +612,9 @@ public class WallSegmentation : MonoBehaviour
                     {
                         Debug.Log("Большинство размерностей нулевые, используем безопасные значения");
                         useNCHW = true;
-                        inputChannels = 3;  // Используем 3 канала (RGB) - по ошибке видно, что модель ожидает 3 канала
-                        inputHeight = 32;   // Установлено согласно логам ошибки
-                        inputWidth = 1;     // Установлено согласно логам ошибки
+                        inputChannels = 3;  // Предполагаем RGB
+                        inputHeight = 128;  // Стандартная высота
+                        inputWidth = 128;   // Стандартная ширина
                         Debug.Log($"Установлены безопасные значения: формат=NCHW, размеры={inputWidth}x{inputHeight}x{inputChannels}");
                         return;
                     }
@@ -733,23 +733,6 @@ public class WallSegmentation : MonoBehaviour
                         Debug.Log($"Установлена ширина (NHWC): {inputWidth}");
                     }
                 }
-            }
-        }
-
-        // Проверяем имя входа модели после анализа - если это модель model.onnx, принудительно устанавливаем 
-        // правильные размерности на основе наблюдений и ошибок
-        foreach (var input in model.inputs)
-        {
-            if (input.name == "pixel_values")
-            {
-                Debug.Log("Обнаружен вход 'pixel_values' - применяем точные параметры для модели model.onnx");
-                // Обновлено на основе ошибки: Expected: 3 == 1
-                inputWidth = 1;    // width = 1
-                inputHeight = 32;  // height = 32 
-                inputChannels = 3; // channels = 3 (RGB)
-                useNCHW = true;
-                Debug.Log($"Принудительно установлены размеры для model.onnx: {inputWidth}x{inputHeight}x{inputChannels}, формат=NCHW");
-                break;
             }
         }
 
@@ -895,7 +878,6 @@ public class WallSegmentation : MonoBehaviour
 
             // Масштабируем текстуру до размера входа модели
             TextureScale.Bilinear(sourceTexture, inputWidth, inputHeight);
-            Debug.Log($"Текстура масштабирована до размеров модели: {inputWidth}x{inputHeight}");
 
             // Проверка входных данных модели и получение правильного количества каналов
             var modelInput = model.inputs[0];
@@ -905,23 +887,46 @@ public class WallSegmentation : MonoBehaviour
             string inputTensorName = modelInput.name;
             Debug.Log($"Имя входного тензора модели: {inputTensorName}, наше заданное имя: {inputName}");
 
-            // ВАЖНО: Используем 3 канала (RGB) вместо 1 канала (grayscale)
-            int modelChannels = 3; // Принудительно используем 3 канала (RGB)
-            Debug.Log($"Принудительно используем 3 канала (RGB) для совместимости с моделью");
+            // Определяем количество каналов на основе анализа модели
+            // Теперь вместо фиксированного значения используем динамическое определение
+            int modelChannels = 3; // По умолчанию 3 канала (RGB)
 
             // Проверяем форму входного тензора и подстраиваемся под модель
             if (modelInput.shape.Length >= 8)
             {
                 // Проверяем форму тензора
                 Debug.Log($"Сложная форма тензора: {string.Join(",", modelInput.shape)}");
-                Debug.Log($"Сохраняем фиксированное значение каналов: {modelChannels}");
+                // Пробуем определить количество каналов по первому ненулевому значению после batch
+                for (int i = 1; i < modelInput.shape.Length; i++)
+                {
+                    if (modelInput.shape[i] > 0)
+                    {
+                        int possibleChannels = (int)modelInput.shape[i];
+                        if (possibleChannels <= 3)
+                        {
+                            modelChannels = possibleChannels;
+                            Debug.Log($"Определено количество каналов: {modelChannels} из формы тензора");
+                            break;
+                        }
+                    }
+                }
             }
             else if (modelInput.shape.Length >= 4)
             {
-                Debug.Log($"Сохраняем фиксированное значение каналов: {modelChannels}");
+                // Стандартная форма [batch, channels, height, width] или [batch, height, width, channels]
+                if (useNCHW && modelInput.shape[1] > 0 && modelInput.shape[1] <= 3)
+                {
+                    modelChannels = (int)modelInput.shape[1];
+                    Debug.Log($"Определено количество каналов NCHW: {modelChannels}");
+                }
+                else if (!useNCHW && modelInput.shape.Length >= 4 && modelInput.shape[3] > 0 && modelInput.shape[3] <= 3)
+                {
+                    modelChannels = (int)modelInput.shape[3];
+                    Debug.Log($"Определено количество каналов NHWC: {modelChannels}");
+                }
             }
 
-            Debug.Log($"Используем {modelChannels} канала (RGB)");
+            Debug.Log($"Используем {modelChannels} {(modelChannels == 1 ? "канал" : "канала")} ({(modelChannels == 1 ? "grayscale" : "RGB")})");
 
             // Преобразование текстуры в входной тензор модели с правильным количеством каналов
             float[] inputData = ConvertTextureToTensor(sourceTexture, inputWidth, inputHeight, modelChannels);
@@ -933,14 +938,8 @@ public class WallSegmentation : MonoBehaviour
             }
 
             // Принудительно проверяем размеры
-            if (inputWidth <= 0) inputWidth = 1;
-            if (inputHeight <= 0) inputHeight = 32;
-
-            // ВАЖНО: Установка стандартных размеров для модели
-            // Фиксируем размеры под модель на основании ошибки: Expected: 3 == 1
-            inputWidth = 1;    // width = 1
-            inputHeight = 32;  // height = 32
-            Debug.Log($"Установлены фиксированные размеры для модели: {inputWidth}x{inputHeight}");
+            if (inputWidth <= 0) inputWidth = 128;
+            if (inputHeight <= 0) inputHeight = 128;
 
             // Создаем тензор с правильным форматом данных и размерностями
             try
@@ -954,40 +953,22 @@ public class WallSegmentation : MonoBehaviour
                     return DemoSegmentation(sourceTexture);
                 }
 
-                // Создаем тензор с точными размерами для model.onnx
-                Debug.Log("Создаем тензор с размерностями: [1, 3, 32, 1] для model.onnx");
-                // Используем TensorShape для явного указания формата NCHW (batch, channels, height, width)
-                var shape = new TensorShape(
-                    1,  // batch
-                    3,  // channels
-                    32, // height
-                    1   // width
-                );
-                inputTensor = new Tensor(shape, inputData);
-                Debug.Log($"Тензор создан: batch={inputTensor.shape.batch}, channels={inputTensor.shape.channels}, height={inputTensor.shape.height}, width={inputTensor.shape.width}");
+                // Создаем тензор с соответствующим форматом и размерностями
+                if (useNCHW)
+                {
+                    Debug.Log($"Используем формат NCHW: [1, {modelChannels}, {inputHeight}, {inputWidth}]");
+                    inputTensor = new Tensor(1, modelChannels, inputHeight, inputWidth, inputData);
+                }
+                else
+                {
+                    Debug.Log($"Используем формат NHWC: [1, {inputHeight}, {inputWidth}, {modelChannels}]");
+                    inputTensor = new Tensor(1, inputHeight, inputWidth, modelChannels, inputData);
+                }
             }
             catch (Exception ex)
             {
-                Debug.LogError($"Ошибка при создании тензора: {ex.Message}, пробуем другой формат");
-
-                try
-                {
-                    // На основе ошибки и документации пробуем формат NHWC
-                    Debug.Log("Пробуем альтернативный формат NHWC с явным указанием размерностей");
-                    var shape = new TensorShape(
-                        1,  // batch
-                        32, // height
-                        1,  // width
-                        3   // channels
-                    );
-                    inputTensor = new Tensor(shape, inputData);
-                    Debug.Log($"Тензор создан в альтернативном формате: batch={inputTensor.shape.batch}, height={inputTensor.shape.height}, width={inputTensor.shape.width}, channels={inputTensor.shape.channels}");
-                }
-                catch (Exception e)
-                {
-                    Debug.LogError($"Невозможно создать тензор: {e.Message}");
-                    return DemoSegmentation(sourceTexture);
-                }
+                Debug.LogError($"Ошибка при создании тензора: {ex.Message}");
+                return DemoSegmentation(sourceTexture);
             }
 
             // Запускаем инференс модели
@@ -1129,55 +1110,40 @@ public class WallSegmentation : MonoBehaviour
         if (texture.width != width || texture.height != height)
         {
             TextureScale.Bilinear(texture, width, height);
-            Debug.Log($"Текстура масштабирована внутри конвертера: {width}x{height}");
         }
 
-        // Принудительно установка значений для model.onnx на основе ошибки
-        // Обновлено на основе ошибки: Expected: 3 == 1 (модель ожидает 3 канала)
-        width = 1;         // width = 1
-        height = 32;       // height = 32
-        channels = 3;      // channels = 3 (RGB)
+        // Изначально считаем 4 канала RGBA для чтения из текстуры
+        int pixelCount = width * height;
+        float[] result = new float[pixelCount * channels];
+        Color[] pixels = texture.GetPixels();
 
-        // Размер тензора для model.onnx: [1, 3, 32, 1]
-        int tensorSize = 1 * channels * height * width; // 96 элементов
-        float[] result = new float[tensorSize];
+        Debug.Log($"Создан тензор с {channels} {(channels == 1 ? "каналом" : "каналами")} ({(channels == 1 ? "grayscale" : "RGB")}), размеры: {width}x{height}");
 
-        Debug.Log($"Подготовка данных для тензора: размер={tensorSize}, размерности=[1,{channels},{height},{width}]");
-
-        try
+        // Нормализация данных пикселей в диапазон [0, 1]
+        for (int i = 0; i < pixelCount; i++)
         {
-            // Получаем пиксели текстуры
-            Color[] pixels = texture.GetPixels();
+            Color pixel = pixels[i];
 
-            // Заполняем данные тензора для модели model.onnx в формате RGB
-            // Формат NCHW: [batch, channels, height, width]
-            for (int h = 0; h < height; h++)
+            if (channels == 1)
             {
-                for (int w = 0; w < width; w++)
-                {
-                    // Определяем позицию в исходном массиве пикселей
-                    int pixelIndex = h * width + w;
-                    if (pixelIndex >= pixels.Length) pixelIndex = pixels.Length - 1;
-
-                    Color pixel = pixels[pixelIndex];
-
-                    // Используем RGB значения как есть
-                    result[0 * channels * height * width + 0 * height * width + h * width + w] = pixel.r; // Красный канал
-                    result[0 * channels * height * width + 1 * height * width + h * width + w] = pixel.g; // Зеленый канал
-                    result[0 * channels * height * width + 2 * height * width + h * width + w] = pixel.b; // Синий канал
-                }
+                // Grayscale - среднее значение RGB
+                float gray = (pixel.r + pixel.g + pixel.b) / 3.0f;
+                result[i] = gray;
             }
-
-            Debug.Log($"Данные для тензора подготовлены успешно: {tensorSize} элементов");
-        }
-        catch (Exception e)
-        {
-            Debug.LogError($"Ошибка при подготовке данных для тензора: {e.Message}");
-
-            // В случае ошибки заполняем массив нулями
-            for (int i = 0; i < result.Length; i++)
+            else if (channels == 3)
             {
-                result[i] = 0.0f;
+                // RGB - каждый канал отдельно
+                result[i * 3 + 0] = pixel.r;  // R канал
+                result[i * 3 + 1] = pixel.g;  // G канал
+                result[i * 3 + 2] = pixel.b;  // B канал
+            }
+            else if (channels == 4)
+            {
+                // RGBA - все 4 канала
+                result[i * 4 + 0] = pixel.r;  // R канал
+                result[i * 4 + 1] = pixel.g;  // G канал
+                result[i * 4 + 2] = pixel.b;  // B канал
+                result[i * 4 + 3] = pixel.a;  // A канал
             }
         }
 
@@ -1837,8 +1803,16 @@ public class WallSegmentation : MonoBehaviour
         string bisenetOutput = "predict";
         int bisenetWallIndex = 9; // Индекс 9 для стен по документации
 
-        // Используем NCHW формат по умолчанию
+        // ВАЖНО: Для всех моделей принудительно используем RGB формат (3 канала)
         useNCHW = true;
+        inputChannels = 3;
+        Debug.Log("ВАЖНО: Для всех моделей принудительно используем RGB формат (3 канала)");
+
+        // По умолчанию используем параметры BiseNet.onnx, как более надежной модели
+        inputName = bisenetInput;
+        outputName = bisenetOutput;
+        wallClassIndex = bisenetWallIndex;
+        Debug.Log($"По умолчанию используем параметры BiseNet.onnx: вход='{inputName}', выход='{outputName}', индекс стены={wallClassIndex}");
 
         // Проверяем наличие входного тензора обоих типов моделей
         bool hasModelOnnxInput = false;
@@ -1876,58 +1850,6 @@ public class WallSegmentation : MonoBehaviour
             }
         }
 
-        // Определяем количество каналов на основе входных данных модели
-        if (model.inputs.Count > 0)
-        {
-            var firstInput = model.inputs[0];
-            if (firstInput.shape.Length >= 4)
-            {
-                if (useNCHW && firstInput.shape[1] > 0 && firstInput.shape[1] <= 3)
-                {
-                    // NCHW формат - каналы в позиции 1
-                    inputChannels = (int)firstInput.shape[1];
-                    Debug.Log($"Определено количество каналов (NCHW): {inputChannels}");
-                }
-                else if (!useNCHW && firstInput.shape.Length >= 4 &&
-                         firstInput.shape[firstInput.shape.Length - 1] > 0 &&
-                         firstInput.shape[firstInput.shape.Length - 1] <= 3)
-                {
-                    // NHWC формат - каналы в последней позиции
-                    inputChannels = (int)firstInput.shape[firstInput.shape.Length - 1];
-                    Debug.Log($"Определено количество каналов (NHWC): {inputChannels}");
-                }
-                else
-                {
-                    // Если не определено из формы тензора
-                    if (hasModelOnnxInput)
-                    {
-                        // По ошибке видно, что модель ожидает 3 канала
-                        inputChannels = 3;
-                        Debug.Log($"Для model.onnx используем 3 канала (RGB)");
-                    }
-                    else
-                    {
-                        inputChannels = 3;
-                        Debug.Log($"Для BiseNet используем 3 канала (RGB)");
-                    }
-                }
-            }
-            else
-            {
-                // Если неправильная форма, используем значение по умолчанию
-                inputChannels = hasModelOnnxInput ? 3 : 3;
-                Debug.Log($"Неправильная форма тензора. Используем {inputChannels} канала");
-            }
-        }
-
-        Debug.Log($"Итоговое количество каналов: {inputChannels} ({(inputChannels == 1 ? "grayscale" : "RGB")})");
-
-        // По умолчанию используем параметры BiseNet.onnx, как более надежной модели
-        inputName = bisenetInput;
-        outputName = bisenetOutput;
-        wallClassIndex = bisenetWallIndex;
-        Debug.Log($"По умолчанию используем параметры BiseNet.onnx: вход='{inputName}', выход='{outputName}', индекс стены={wallClassIndex}");
-
         // Проверяем совпадения по типам моделей и обновляем параметры
         if (hasBisenetInput)
         {
@@ -1943,15 +1865,6 @@ public class WallSegmentation : MonoBehaviour
             inputName = modelOnnxInput;
             outputName = modelOnnxOutput;
             wallClassIndex = modelOnnxWallIndex;
-
-            // Обновляем на основе ошибки: Expected: 3 == 1
-            // Модель ожидает 3 канала (RGB)
-            inputWidth = 1;    // width = 1
-            inputHeight = 32;  // height = 32 
-            inputChannels = 3; // channels = 3 (RGB)
-            useNCHW = true;
-            Debug.Log($"Установлены точные размеры для model.onnx: {inputWidth}x{inputHeight}x{inputChannels} (RGB)");
-
             Debug.Log($"Используем имена тензоров model.onnx: вход='{inputName}', выход='{outputName}', индекс стены={wallClassIndex}");
         }
         else
