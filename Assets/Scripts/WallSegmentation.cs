@@ -44,7 +44,12 @@ public class WallSegmentation : MonoBehaviour
     [SerializeField] private string inputName = "pixel_values"; // Имя входа модели
     [SerializeField] private string outputName = "logits"; // Имя выхода модели
     [SerializeField, Range(0, 1)] private float threshold = 0.3f; // Порог для бинаризации маски
-    [SerializeField] private int wallClassIndex = 0; // Индекс класса стены в выходном тензоре
+    [SerializeField] private int wallClassIndex = 0; // Индекс класса стены в выходном тензоре (для model.onnx - 0, наиболее активный)
+
+    [Header("Alternative Model Names")]
+    [SerializeField] private string altInputName = "image"; // Альтернативное имя входа (для BiseNet.onnx)
+    [SerializeField] private string altOutputName = "predict"; // Альтернативное имя выхода (для BiseNet.onnx)
+    [SerializeField] private int altWallClassIndex = 9; // Альтернативный индекс класса стены (для BiseNet.onnx)
 
     [Header("Debug & Performance")]
     [SerializeField] private bool forceDemoMode = false; // Отключаем принудительный демо-режим
@@ -584,6 +589,9 @@ public class WallSegmentation : MonoBehaviour
                 SwitchToDemoMode();
                 return;
             }
+
+            // Проверяем и выбираем правильные имена тензоров
+            SelectCorrectTensorNames();
 
             // Проверяем наличие нужных входов/выходов в модели
             bool hasInputName = false;
@@ -1815,5 +1823,77 @@ public class WallSegmentation : MonoBehaviour
         }
 
         return rgbData;
+    }
+
+    /// <summary>
+    /// Проверка и выбор правильных имен тензоров на основе загруженной модели
+    /// </summary>
+    private void SelectCorrectTensorNames()
+    {
+        if (model == null || model.inputs == null || model.inputs.Count == 0)
+            return;
+
+        // Проверяем наличие входного тензора с основным именем
+        bool hasMainInput = false;
+        bool hasAltInput = false;
+
+        foreach (var input in model.inputs)
+        {
+            if (input.name == inputName)
+            {
+                hasMainInput = true;
+                Debug.Log($"Найден входной тензор с именем '{inputName}' (model.onnx)");
+            }
+            else if (input.name == altInputName)
+            {
+                hasAltInput = true;
+                Debug.Log($"Найден входной тензор с именем '{altInputName}' (BiseNet.onnx)");
+            }
+        }
+
+        // Проверяем наличие выходного тензора с основным именем
+        bool hasMainOutput = false;
+        bool hasAltOutput = false;
+
+        foreach (var output in model.outputs)
+        {
+            if (output == outputName)
+            {
+                hasMainOutput = true;
+                Debug.Log($"Найден выходной тензор с именем '{outputName}' (model.onnx)");
+            }
+            else if (output == altOutputName)
+            {
+                hasAltOutput = true;
+                Debug.Log($"Найден выходной тензор с именем '{altOutputName}' (BiseNet.onnx)");
+            }
+        }
+
+        // Если найдены альтернативные имена тензоров (BiseNet.onnx), используем их
+        if (hasAltInput && hasAltOutput)
+        {
+            Debug.Log($"Обнаружена модель BiseNet.onnx, переключаемся на соответствующие имена тензоров");
+            inputName = altInputName;
+            outputName = altOutputName;
+            wallClassIndex = altWallClassIndex;
+            Debug.Log($"Используем имена тензоров: вход='{inputName}', выход='{outputName}', индекс стены={wallClassIndex}");
+        }
+        else if (hasMainInput && hasMainOutput)
+        {
+            Debug.Log($"Обнаружена модель model.onnx, используем стандартные имена тензоров");
+            Debug.Log($"Используем имена тензоров: вход='{inputName}', выход='{outputName}', индекс стены={wallClassIndex}");
+        }
+        else
+        {
+            // Если не найдены ни основные, ни альтернативные имена, используем первые доступные
+            Debug.LogWarning("Не найдены ожидаемые имена тензоров, используем первые доступные");
+
+            if (model.inputs.Count > 0 && model.outputs.Count > 0)
+            {
+                inputName = model.inputs[0].name;
+                outputName = model.outputs[0];
+                Debug.Log($"Выбраны доступные имена тензоров: вход='{inputName}', выход='{outputName}'");
+            }
+        }
     }
 }
