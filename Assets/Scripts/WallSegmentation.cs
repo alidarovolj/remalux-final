@@ -760,19 +760,27 @@ public class WallSegmentation : MonoBehaviour
             }
 
             // Создаем тензор с правильным форматом данных
-            if (useNCHW)
+            try
             {
-                // Для ONNX моделей: NCHW (batch, channels, height, width)
-                inputTensor = new Tensor(1, inputChannels, inputHeight, inputWidth, inputData);
-            }
-            else
-            {
-                // Для Unity: NHWC (batch, height, width, channels)
-                inputTensor = new Tensor(1, inputHeight, inputWidth, inputChannels, inputData);
-            }
+                if (useNCHW)
+                {
+                    // Для ONNX моделей: NCHW (batch, channels, height, width)
+                    inputTensor = new Tensor(1, inputChannels, inputHeight, inputWidth, inputData);
+                }
+                else
+                {
+                    // Для Unity: NHWC (batch, height, width, channels)
+                    inputTensor = new Tensor(1, inputHeight, inputWidth, inputChannels, inputData);
+                }
 
-            // Запускаем инференс модели
-            worker.Execute(inputTensor);
+                // Запускаем инференс модели
+                worker.Execute(inputTensor);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"Ошибка при создании или выполнении тензора: {ex.Message}");
+                return DemoSegmentation(sourceTexture);
+            }
 
             // Получаем результат из выходного тензора
             Tensor outputTensor = null;
@@ -786,6 +794,13 @@ public class WallSegmentation : MonoBehaviour
                     // Get the name directly from outputs collection
                     firstOutputName = model.outputs[0];
                     outputTensor = worker.PeekOutput(firstOutputName);
+
+                    // Логируем информацию о форме выходного тензора
+                    if (enableDebugLogs)
+                    {
+                        int[] shape = outputTensor.shape.ToArray();
+                        Debug.Log($"Форма выходного тензора: [{string.Join(",", shape)}]");
+                    }
                 }
                 else if (!string.IsNullOrEmpty(outputName))
                 {
@@ -924,92 +939,116 @@ public class WallSegmentation : MonoBehaviour
     /// </summary>
     private Texture2D CreateSegmentationTexture(Tensor outputTensor, int targetWidth, int targetHeight)
     {
-        // Получаем размеры выходного тензора
-        int tensorWidth = outputTensor.width;
-        int tensorHeight = outputTensor.height;
-        int tensorChannels = outputTensor.channels;
-
-        // Создаем текстуру для результата сегментации
-        Texture2D segmentationTexture = new Texture2D(targetWidth, targetHeight, TextureFormat.RGBA32, false);
-
-        // Заполняем текстуру в соответствии с данными тензора
-        for (int y = 0; y < targetHeight; y++)
+        try
         {
-            for (int x = 0; x < targetWidth; x++)
+            // Получаем размеры выходного тензора
+            int[] shape = outputTensor.shape.ToArray();
+
+            // Определяем размеры и формат тензора
+            bool isNCHW = shape.Length >= 4 && shape[1] <= 10; // Предполагаем, что если второе измерение <= 10, то это каналы (NCHW)
+
+            int tensorWidth, tensorHeight, tensorChannels;
+
+            if (isNCHW)
             {
-                // Масштабируем координаты к размеру тензора
-                int tensorX = (int)(x * (float)tensorWidth / targetWidth);
-                int tensorY = (int)(y * (float)tensorHeight / targetHeight);
+                // NCHW формат (batch, channel, height, width)
+                tensorChannels = shape[1];
+                tensorHeight = shape[2];
+                tensorWidth = shape[3];
 
-                // Проверяем границы
-                tensorX = Mathf.Clamp(tensorX, 0, tensorWidth - 1);
-                tensorY = Mathf.Clamp(tensorY, 0, tensorHeight - 1);
+                Debug.Log($"Обнаружен NCHW формат: {tensorChannels} каналов, {tensorHeight}x{tensorWidth}");
+            }
+            else
+            {
+                // NHWC формат (batch, height, width, channel)
+                tensorHeight = shape[1];
+                tensorWidth = shape[2];
+                tensorChannels = shape[3];
 
-                // Получаем значение для пикселя
-                // Для сегментационных моделей обычно выходом является тензор [batch, height, width, classes]
-                float value = 0;
+                Debug.Log($"Обнаружен NHWC формат: {tensorHeight}x{tensorWidth}, {tensorChannels} каналов");
+            }
 
-                // Проверяем формат выходных данных модели
-                if (tensorChannels == 1) // Если это маска (1 канал)
+            // Создаем текстуру для результата сегментации
+            Texture2D segmentationTexture = new Texture2D(targetWidth, targetHeight, TextureFormat.RGBA32, false);
+
+            // Адаптируем wall class index, если он выходит за пределы
+            int effectiveWallClassIndex = Mathf.Clamp(wallClassIndex, 0, tensorChannels - 1);
+
+            // Заполняем текстуру в соответствии с данными тензора
+            for (int y = 0; y < targetHeight; y++)
+            {
+                for (int x = 0; x < targetWidth; x++)
                 {
-                    // Просто берем значение маски
-                    value = outputTensor[0, tensorY, tensorX, 0];
-                }
-                else // Если это multi-channel logits (несколько каналов)
-                {
-                    // Для модели с multi-class output, берем нужный класс (например, "wall" или "background")
-                    int channelIndex = wallClassIndex;
-                    if (channelIndex >= tensorChannels)
+                    // Масштабируем координаты к размеру тензора
+                    int tensorX = (int)(x * (float)tensorWidth / targetWidth);
+                    int tensorY = (int)(y * (float)tensorHeight / targetHeight);
+
+                    // Проверяем границы
+                    tensorX = Mathf.Clamp(tensorX, 0, tensorWidth - 1);
+                    tensorY = Mathf.Clamp(tensorY, 0, tensorHeight - 1);
+
+                    // Получаем значение для пикселя в зависимости от формата
+                    float value;
+
+                    if (tensorChannels == 1) // Если это маска (1 канал)
                     {
-                        Debug.LogWarning($"Указанный индекс класса стены ({wallClassIndex}) больше количества каналов в выходном тензоре ({tensorChannels}). Используем индекс 0.");
-                        channelIndex = 0;
+                        // Просто берем значение маски
+                        value = isNCHW
+                            ? outputTensor[0, 0, tensorY, tensorX]
+                            : outputTensor[0, tensorY, tensorX, 0];
+                    }
+                    else // Если это multi-channel logits (несколько каналов)
+                    {
+                        // Получаем значение из тензора
+                        value = isNCHW
+                            ? outputTensor[0, effectiveWallClassIndex, tensorY, tensorX]
+                            : outputTensor[0, tensorY, tensorX, effectiveWallClassIndex];
+
+                        // Отладочный вывод каждые 20 пикселей
+                        if (enableDebugLogs && x % 20 == 0 && y % 20 == 0)
+                        {
+                            Debug.Log($"Значение тензора для класса {effectiveWallClassIndex} в точке ({x},{y}): {value}");
+                        }
                     }
 
-                    // Получаем значение из тензора
-                    if (useNCHW)
+                    // Определяем цвет пикселя в зависимости от значения
+                    Color pixelColor = Color.clear;
+
+                    // Для новых моделей могут быть отрицательные значения
+                    if (effectiveWallClassIndex == 0 || effectiveWallClassIndex == 3) // Для классов с негативными значениями
                     {
-                        // NCHW формат (batch, channel, height, width)
-                        value = outputTensor[0, channelIndex, tensorY, tensorX];
+                        pixelColor = value > -1.9f ? wallColor : Color.clear;
                     }
                     else
                     {
-                        // NHWC формат (batch, height, width, channel)
-                        value = outputTensor[0, tensorY, tensorX, channelIndex];
+                        pixelColor = value > threshold ? wallColor : Color.clear;
                     }
+
+                    // Устанавливаем цвет пикселя
+                    segmentationTexture.SetPixel(x, y, pixelColor);
                 }
-
-                // Применяем порог для бинаризации
-                // Для модели model.onnx выходные значения отрицательные,
-                // поэтому используем сравнение с негативным порогом или ищем максимальный класс
-                Color pixelColor;
-
-                if (wallClassIndex == 0 || wallClassIndex == 3) // Классы стен в model.onnx
-                {
-                    // Для model.onnx - значения отрицательные, поэтому инвертируем сравнение
-                    pixelColor = value > -1.9f ? wallColor : Color.clear;
-
-                    // Вывод отладочной информации при включенном логировании
-                    if (enableDebugLogs && x % 20 == 0 && y % 20 == 0)
-                    {
-                        int channelIndex = wallClassIndex; // Определяем переменную здесь
-                        Debug.Log($"Значение тензора для класса {channelIndex} в точке ({x},{y}): {value}");
-                    }
-                }
-                else
-                {
-                    // Для других моделей используем обычное сравнение с порогом
-                    pixelColor = value > threshold ? wallColor : Color.clear;
-                }
-
-                // Устанавливаем цвет пикселя
-                segmentationTexture.SetPixel(x, y, pixelColor);
             }
+
+            // Применяем изменения к текстуре
+            segmentationTexture.Apply();
+
+            return segmentationTexture;
         }
+        catch (Exception ex)
+        {
+            Debug.LogError($"Ошибка при создании текстуры сегментации: {ex.Message}");
 
-        // Применяем изменения к текстуре
-        segmentationTexture.Apply();
+            // В случае ошибки возвращаем пустую текстуру
+            Texture2D fallbackTexture = new Texture2D(targetWidth, targetHeight, TextureFormat.RGBA32, false);
+            Color[] clearColors = new Color[targetWidth * targetHeight];
+            for (int i = 0; i < clearColors.Length; i++)
+                clearColors[i] = Color.clear;
 
-        return segmentationTexture;
+            fallbackTexture.SetPixels(clearColors);
+            fallbackTexture.Apply();
+
+            return fallbackTexture;
+        }
     }
 
     // Обновление плоскостей на основе результатов сегментации

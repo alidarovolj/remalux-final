@@ -108,6 +108,10 @@ public static class ARSceneBuilder
                   var originGO = new GameObject("AR Session Origin");
                   var origin = originGO.AddComponent(arSessionOriginType);
 
+                  // Создаем Camera Floor Offset для XR Origin
+                  GameObject cameraFloorOffsetGO = new GameObject("Camera Floor Offset");
+                  cameraFloorOffsetGO.transform.SetParent(originGO.transform);
+
                   // Get trackablesParent property using reflection
                   var trackablesParentProperty = arSessionOriginType.GetProperty("trackablesParent",
                       BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
@@ -122,9 +126,18 @@ public static class ARSceneBuilder
                         Debug.Log("trackablesParent is read-only or not found, skipping assignment");
                   }
 
+                  // Получаем поле Camera Floor Offset в XR Origin и устанавливаем его
+                  var cameraFloorOffsetProperty = arSessionOriginType.GetProperty("CameraFloorOffsetObject",
+                      BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+                  if (cameraFloorOffsetProperty != null)
+                  {
+                        cameraFloorOffsetProperty.SetValue(origin, cameraFloorOffsetGO);
+                        Debug.Log("Установлен Camera Floor Offset для XR Origin");
+                  }
+
                   // 3. AR Camera under Origin
                   var camGO = new GameObject("AR Camera");
-                  camGO.transform.SetParent(originGO.transform);
+                  camGO.transform.SetParent(cameraFloorOffsetGO.transform); // Теперь камера под Floor Offset
                   var cam = camGO.AddComponent<Camera>();
                   cam.clearFlags = CameraClearFlags.SolidColor;
                   cam.backgroundColor = Color.black;
@@ -140,6 +153,21 @@ public static class ARSceneBuilder
                         catch (Exception ex)
                         {
                               Debug.LogWarning($"Couldn't add ARPoseDriver: {ex.Message}. You may need to update AR Foundation package.");
+                        }
+                  }
+
+                  // Добавляем Tracked Pose Driver (Input System) если есть InputSystem
+                  var trackedPoseDriverType = GetTypeFromName("UnityEngine.InputSystem.XR.TrackedPoseDriver, Unity.InputSystem");
+                  if (trackedPoseDriverType != null)
+                  {
+                        try
+                        {
+                              camGO.AddComponent(trackedPoseDriverType);
+                              Debug.Log("Добавлен Tracked Pose Driver (Input System) к камере");
+                        }
+                        catch (Exception ex)
+                        {
+                              Debug.LogWarning($"Не удалось добавить Tracked Pose Driver: {ex.Message}");
                         }
                   }
 
@@ -360,6 +388,30 @@ public static class ARSceneBuilder
                   var anchorMaxProperty = rectTransformType.GetProperty("anchorMax",
                       BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
                   anchorMaxProperty?.SetValue(rect, new Vector2(1, 0.2f));
+
+                  // Создаем RawImage для отладочной визуализации сегментации
+                  GameObject debugImageGO = new GameObject("Debug Segmentation View");
+                  debugImageGO.transform.SetParent(canvasGO.transform, false);
+
+                  // Добавляем RectTransform
+                  var debugRect = debugImageGO.AddComponent(rectTransformType);
+
+                  // Настраиваем позицию (правый верхний угол экрана)
+                  var debugRectAnchorMinProperty = rectTransformType.GetProperty("anchorMin",
+                      BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+                  debugRectAnchorMinProperty?.SetValue(debugRect, new Vector2(0.65f, 0.7f));
+
+                  var debugRectAnchorMaxProperty = rectTransformType.GetProperty("anchorMax",
+                      BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+                  debugRectAnchorMaxProperty?.SetValue(debugRect, new Vector2(0.95f, 0.95f));
+
+                  // Добавляем RawImage
+                  System.Type rawImageType = System.Type.GetType("UnityEngine.UI.RawImage, UnityEngine.UI");
+                  if (rawImageType != null)
+                  {
+                        var rawImage = debugImageGO.AddComponent(rawImageType);
+                        Debug.Log("Добавлен RawImage для отладочной визуализации сегментации");
+                  }
 
                   Debug.Log("UI elements created successfully.");
             }

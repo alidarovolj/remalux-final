@@ -112,6 +112,62 @@ public class CreateSceneWithFixedSegmentation : Editor
                         mainCamera.transform.SetParent(originGO.transform);
                   }
 
+                  // Создаем объект Camera Floor Offset для XR Origin
+                  GameObject cameraFloorOffsetGO = new GameObject("Camera Floor Offset");
+                  cameraFloorOffsetGO.transform.SetParent(originGO.transform);
+
+                  // Перемещаем камеру под Camera Floor Offset
+                  mainCamera.transform.SetParent(cameraFloorOffsetGO.transform);
+
+                  // Получаем поле Camera Floor Offset в XR Origin и устанавливаем его
+                  var originComponent = originGO.GetComponent(originType);
+                  var cameraFloorOffsetProperty = originType.GetProperty("CameraFloorOffsetObject",
+                      BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+                  if (cameraFloorOffsetProperty != null)
+                  {
+                        cameraFloorOffsetProperty.SetValue(originComponent, cameraFloorOffsetGO);
+                        Debug.Log("Установлен Camera Floor Offset для XR Origin");
+                  }
+
+                  // Добавляем Tracked Pose Driver (Input System)
+                  // Ищем тип через рефлексию
+                  var trackedPoseDriverType = GetTypeFromName("UnityEngine.InputSystem.XR.TrackedPoseDriver, Unity.InputSystem");
+                  if (trackedPoseDriverType != null)
+                  {
+                        var trackedPoseDriver = mainCamera.gameObject.AddComponent(trackedPoseDriverType);
+                        Debug.Log("Добавлен Tracked Pose Driver (Input System) к камере");
+
+                        // Можно попробовать настроить свойства TPD через рефлексию
+                        try
+                        {
+                              // Пытаемся настроить Position Input
+                              var positionInputProperty = trackedPoseDriverType.GetProperty("positionInput",
+                                  BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+                              if (positionInputProperty != null)
+                              {
+                                    // Создаем InputActionProperty через конструктор
+                                    var inputActionPropertyType = GetTypeFromName("UnityEngine.InputSystem.InputActionProperty, Unity.InputSystem");
+                                    if (inputActionPropertyType != null)
+                                    {
+                                          var constructor = inputActionPropertyType.GetConstructor(Type.EmptyTypes);
+                                          if (constructor != null)
+                                          {
+                                                var inputActionProperty = constructor.Invoke(null);
+                                                positionInputProperty.SetValue(trackedPoseDriver, inputActionProperty);
+                                          }
+                                    }
+                              }
+                        }
+                        catch (Exception ex)
+                        {
+                              Debug.LogWarning($"Не удалось настроить Tracked Pose Driver: {ex.Message}");
+                        }
+                  }
+                  else
+                  {
+                        Debug.LogWarning("Не удалось найти тип TrackedPoseDriver");
+                  }
+
                   // Add ARCameraManager
                   var cameraManagerType = GetTypeFromName("UnityEngine.XR.ARFoundation.ARCameraManager, Unity.XR.ARFoundation");
                   Component arCameraManager = null;
@@ -325,6 +381,32 @@ public class CreateSceneWithFixedSegmentation : Editor
                               rect.anchorMin = new Vector2(0, 0);
                               rect.anchorMax = new Vector2(1, 0.2f);
                               rect.offsetMin = rect.offsetMax = Vector2.zero;
+                        }
+
+                        // Создаем RawImage для отладочной визуализации сегментации
+                        GameObject debugImageGO = new GameObject("Debug Segmentation View");
+                        debugImageGO.transform.SetParent(canvasObj.transform, false);
+
+                        // Находим тип RawImage через рефлексию
+                        var rawImageType = GetTypeFromName("UnityEngine.UI.RawImage, UnityEngine.UI");
+                        if (rawImageType != null)
+                        {
+                              var rawImage = debugImageGO.AddComponent(rawImageType);
+
+                              // Устанавливаем RectTransform для отображения в углу экрана
+                              var debugRect = debugImageGO.GetComponent<RectTransform>();
+                              if (debugRect != null)
+                              {
+                                    debugRect.anchorMin = new Vector2(0.05f, 0.7f);
+                                    debugRect.anchorMax = new Vector2(0.35f, 0.95f);
+                                    debugRect.offsetMin = debugRect.offsetMax = Vector2.zero;
+
+                                    Debug.Log("Создан RawImage для отладочной визуализации сегментации");
+                              }
+                        }
+                        else
+                        {
+                              Debug.LogWarning("Не удалось найти тип RawImage");
                         }
                   }
             }
